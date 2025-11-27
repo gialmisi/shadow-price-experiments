@@ -7,7 +7,7 @@ import polars as pl
 from desdeo.emo import algorithms, crossover, generator, mutation, scalar_selection, selection, termination
 from desdeo.emo.hooks.archivers import Archive
 from desdeo.problem import Problem
-from desdeo.problem.testproblems.single_objective import mystery_function, new_branin_function
+from desdeo.problem.testproblems.single_objective import mishras_bird_constrained, mystery_function, new_branin_function
 
 
 def run_nsga2_with_mode(
@@ -94,10 +94,10 @@ def run(
 
 
 def main():
-    problem_fun = mystery_function
+    problem_fun = new_branin_function
     problem = problem_fun()
-    mode = "relaxed"
-    constraint_thresholds = [0.2, 0.4, 0.6]
+    mode = "ranking"
+    constraint_thresholds = [2, 4, 6, 8]
     pop_sizes = [6, 12, 18]
     n_generations = 100
     n_runs = 500
