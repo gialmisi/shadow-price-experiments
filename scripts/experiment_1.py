@@ -96,8 +96,8 @@ def run(
 def main():
     problem_fun = new_branin_function
     problem = problem_fun()
-    mode = "ranking"
-    constraint_thresholds = [2, 4, 6, 8]
+    mode = "baseline2"
+    constraint_thresholds = [0]
     pop_sizes = [6, 12, 18]
     n_generations = 100
     n_runs = 500
