@@ -1,0 +1,23 @@
+# General setup
+
+results_dir: "results"
+experiment_script: "scripts/experiment_1.py"
+result_extension: "parquet"
+
+# Data generation
+modes: ["baseline2", "alternate"]
+population_sizes: [6, 12, 18]
+n_generations: 100
+n_runs: 1000
+
+## List of all considered problems
+problems:
+  - name: "branin"
+    constraint_symbol: "c_1"
+    objective_symbol: "f_1"
+    constraint_thresholds: [0.0, 0.5, 1.0, 1.5]
+
+  - name: "mystery"
+    constraint_symbol: "c_1"
+    objective_symbol: "f_1"
+    constraint_thresholds: [0.0, 0.5, 1.0, 1.5]
