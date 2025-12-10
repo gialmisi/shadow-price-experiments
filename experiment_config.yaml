@@ -1,23 +1,37 @@
 # General setup
 
 results_dir: "results"
-experiment_script: "scripts/experiment_1.py"
+data_gen_script: "scripts/experiment_1.py"
 result_extension: "parquet"
 
+# NSGA2 options
+
+xover_probability: 0.9
+xover_distribution: 20
+tournament_size: 2
+distribution_index: 20
+
 # Data generation
-modes: ["baseline2", "alternate"]
+
+modes: ["baseline", "baseline2", "alternate", "relaxed", "ranking"]
 population_sizes: [6, 12, 18]
 n_generations: 100
 n_runs: 1000
 
 ## List of all considered problems
+
 problems:
   - name: "branin"
     constraint_symbol: "c_1"
     objective_symbol: "f_1"
-    constraint_thresholds: [0.0, 0.5, 1.0, 1.5]
+    constraint_thresholds: [5.0, 10.0, 15.0, 20.0, 25.0]
 
   - name: "mystery"
     constraint_symbol: "c_1"
     objective_symbol: "f_1"
-    constraint_thresholds: [0.0, 0.5, 1.0, 1.5]
+    constraint_thresholds: [0.1, 0.2, 0.3, 0.4, 0.5]
+
+  - name: "mishrasbird"
+    constraint_symbol: "c_1"
+    objective_symbol: "f_1"
+    constraint_thresholds: [1.0, 2.0, 3.0, 4.0, 5.0]

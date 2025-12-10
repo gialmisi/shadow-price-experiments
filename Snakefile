@@ -3,7 +3,7 @@ configfile: "experiment_config.yaml"
 import os
 
 RESULTS_DIR = config["results_dir"]
-SCRIPT = config["experiment_script"]
+DATA_GEN_SCRIPT = config["data_gen_script"]
 EXT = config["result_extension"]
 
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
@@ -35,18 +35,22 @@ rule all:
         [
         os.path.join(
                 RESULTS_DIR,
-                combo["problem_name"],
-                f"{combo["problem_name"]}_{combo['mode']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}.{EXT}",
+                f"{combo["problem_name"]}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}.{EXT}",
             )
             for combo in param_combinations()
         ]
 
-rule run_experiment:
+rule generate_data:
     output:
         os.path.join(
             RESULTS_DIR,
-            "{problem_name}",
-            "{mode}_ct{ct}_psize{psize}." + EXT,
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}." + EXT,
+        )
+    log:
+        os.path.join(
+            RESULTS_DIR,
+            "log",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}.log"
         )
     params:
         n_generations=lambda wc: config["n_generations"],
@@ -59,4 +63,4 @@ rule run_experiment:
             if constraint_threshold_str(ct) == wc.ct
         ),
     script:
-        SCRIPT
+        DATA_GEN_SCRIPT
