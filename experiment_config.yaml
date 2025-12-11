@@ -2,6 +2,7 @@
 
 results_dir: "results"
 data_gen_script: "scripts/experiment_1.py"
+front_gen_script: "scripts/generate_front.py"
 result_extension: "parquet"
 
 # NSGA2 options
@@ -17,6 +18,11 @@ modes: ["baseline", "baseline2", "alternate", "relaxed", "ranking"]
 population_sizes: [6, 12, 18]
 n_generations: 100
 n_runs: 1000
+
+# Front generation
+
+n_generations_front: 10000
+population_size_front: 1000
 
 ## List of all considered problems
 

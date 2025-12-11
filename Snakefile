@@ -4,6 +4,7 @@ import os
 
 RESULTS_DIR = config["results_dir"]
 DATA_GEN_SCRIPT = config["data_gen_script"]
+FRONT_GEN_SCRIPT = config["front_gen_script"]
 EXT = config["result_extension"]
 
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
@@ -38,6 +39,14 @@ rule all:
                 f"{combo["problem_name"]}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}.{EXT}",
             )
             for combo in param_combinations()
+        ] +
+        [
+        os.path.join(
+                RESULTS_DIR,
+                "fronts",
+                f"{p["name"]}_gen{config['n_generations_front']}_psize{config['population_size_front']}.{EXT}",
+            )
+            for p in config["problems"]
         ]
 
 rule generate_data:
@@ -64,3 +73,16 @@ rule generate_data:
         ),
     script:
         DATA_GEN_SCRIPT
+
+rule generate_pareto_front:
+    output:
+        os.path.join(
+                RESULTS_DIR,
+                "fronts",
+                "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + '.' + EXT,
+            )
+    params:
+        constraint_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbol"],
+
+    script:
+        FRONT_GEN_SCRIPT
