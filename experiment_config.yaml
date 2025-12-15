@@ -3,6 +3,7 @@
 results_dir: "results"
 data_gen_script: "scripts/experiment_1.py"
 front_gen_script: "scripts/generate_front.py"
+summary_stats_script: "scripts/summary_statistics.py"
 result_extension: "parquet"
 
 # NSGA2 options
@@ -16,7 +17,7 @@ distribution_index: 20
 
 modes: ["baseline", "baseline2", "alternate", "relaxed", "ranking"]
 population_sizes: [6, 12, 18]
-n_generations: 100
+n_generations: 150
 n_runs: 1000
 
 # Front generation
@@ -41,3 +42,7 @@ problems:
     constraint_symbol: "c_1"
     objective_symbol: "f_1"
     constraint_thresholds: [1.0, 2.0, 3.0, 4.0, 5.0]
+
+## problems for which summary statistics make sense
+
+summary_problems: ["branin", "mystery"]

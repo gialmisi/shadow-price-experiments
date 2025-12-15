@@ -98,24 +98,7 @@ def single_run(  # noqa: PLR0913
         objective_symbol=objective_symbol,
     )
 
-    solutions = archive.solutions
-
-    feasible = solutions.with_columns(
-        pl.when(pl.col(constraint_symbol) <= 0)
-        .then(pl.col(f"{objective_symbol}_min"))
-        .otherwise(float("inf"))
-        .alias(f"feasible_{objective_symbol}")
-    )
-
-    best_per_gen = (
-        feasible.group_by("generation")
-        .agg(pl.col(f"feasible_{objective_symbol}").min().alias(f"best_{objective_symbol}_this_gen"))
-        .sort("generation")
-    )
-
-    best_so_far = best_per_gen.with_columns(best_per_gen[f"best_{objective_symbol}_this_gen"].cum_min().alias("best"))
-
-    return best_so_far, solutions
+    return archive.solutions
 
 
 def snakemake_main():
@@ -140,7 +123,6 @@ def snakemake_main():
         raise ValueError(f"Unknown problem '{problem_name}'. Add it to PROBLEM_BUILDERS in run_experiment.py.") from err
     problem = problem_fun()
 
-    best_results: pl.DataFrame | None = None
     solutions_results: pl.DataFrame | None = None
 
     for run_idx in range(n_runs):
@@ -149,7 +131,7 @@ def snakemake_main():
                 f"[{problem_name}] mode={mode}, ct={constraint_threshold}, pop_size={pop_size}: run {run_idx + 1}/{n_runs}"
             )
 
-        best, solutions = single_run(
+        solutions = single_run(
             problem=problem,
             mode=mode,
             constraint_threshold=constraint_threshold,
@@ -157,9 +139,8 @@ def snakemake_main():
             n_generations=n_generations,
             constraint_symbol=constraint_symbol,
             objective_symbol=objective_symbol,
-        )
+        ).with_columns(pl.lit(run_idx).alias("run"))
 
-        best_results = best if best_results is None else pl.concat([best_results, best])
         solutions_results = solutions if solutions_results is None else pl.concat([solutions_results, solutions])
 
     now_str = datetime.now().isoformat()
@@ -175,35 +156,7 @@ def snakemake_main():
         objective_symbol: {objective_symbol}
         """
 
-    combined = best_results
-
-    stats = (
-        combined.filter(pl.col("best").is_finite())
-        .group_by("generation")
-        .agg(
-            [
-                pl.col("best").mean().alias("best_mean"),
-                pl.col("best").std().alias("best_std"),
-            ]
-        )
-        .with_columns(
-            [
-                (pl.col("best_mean") + pl.col("best_std")).alias("best_upper"),
-                (pl.col("best_mean") - pl.col("best_std")).alias("best_lower"),
-            ]
-        )
-        .sort("generation")
-    ).filter(
-        pl.all_horizontal(
-            pl.col("best_mean").is_finite(),
-            pl.col("best_upper").is_finite(),
-            pl.col("best_lower").is_finite(),
-        )
-    )
-
-    solutions_and_stats = solutions_results.join(stats, on="generation", how="left")
-
-    solutions_and_stats.write_parquet(
+    solutions_results.write_parquet(
         out_path,
         metadata={
             "notes": parameters,

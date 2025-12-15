@@ -5,6 +5,8 @@ import os
 RESULTS_DIR = config["results_dir"]
 DATA_GEN_SCRIPT = config["data_gen_script"]
 FRONT_GEN_SCRIPT = config["front_gen_script"]
+SUMMARY_PROBLEMS = config["summary_problems"]
+SUMMARY_STATS_SCRIPT = config["summary_stats_script"]
 EXT = config["result_extension"]
 
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
@@ -36,6 +38,7 @@ rule all:
         [
         os.path.join(
                 RESULTS_DIR,
+                "data",
                 f"{combo["problem_name"]}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}.{EXT}",
             )
             for combo in param_combinations()
@@ -47,12 +50,22 @@ rule all:
                 f"{p["name"]}_gen{config['n_generations_front']}_psize{config['population_size_front']}.{EXT}",
             )
             for p in config["problems"]
+        ] +
+        [
+            os.path.join(
+                RESULTS_DIR,
+                "summary",
+                f"{combo['problem_name']}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}_summary.{EXT}",
+            )
+            for combo in param_combinations()
+            if combo["problem_name"] in SUMMARY_PROBLEMS
         ]
 
 rule generate_data:
     output:
         os.path.join(
             RESULTS_DIR,
+            "data",
             "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}." + EXT,
         )
     log:
@@ -86,3 +99,41 @@ rule generate_pareto_front:
 
     script:
         FRONT_GEN_SCRIPT
+
+
+rule summary_statistics:
+    input:
+        data=os.path.join(
+            RESULTS_DIR,
+            "data",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}." + EXT,
+        ),
+        front=os.path.join(
+            RESULTS_DIR,
+            "fronts",
+            "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
+        )
+    output:
+        os.path.join(
+            RESULTS_DIR,
+            "summary",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}_summary." + EXT,
+        )
+    params:
+        n_generations=lambda wc: config["n_generations"],
+        n_runs=lambda wc: config["n_runs"],
+        constraint_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbol"],
+        objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
+        constraint_threshold=lambda wc: next(
+            ct
+            for ct in PROBLEM_BY_NAME[wc.problem_name]["constraint_thresholds"]
+            if constraint_threshold_str(ct) == wc.ct
+        ),
+    log:
+        os.path.join(
+            RESULTS_DIR,
+            "log",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}_summary.log"
+        )
+    script:
+        SUMMARY_STATS_SCRIPT
