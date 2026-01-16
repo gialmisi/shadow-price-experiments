@@ -8,22 +8,23 @@ from desdeo.emo.hooks.archivers import NonDominatedArchive
 from desdeo.problem import Objective, Problem
 
 
-def setup_problem(problem: Problem, constraint_symbol: str) -> Problem:
+def setup_problem(problem: Problem, constraint_symbols: list[str]) -> Problem:
     """Takes a single-objective optimization problem and setups one...
 
     Takes a single-objective optimization problem and setups one of its constraints as its second objective function.
     """
+    extra_objectives = [
+        Objective(
+            name=f"Constraint {sym}",
+            symbol=sym,
+            func=problem.get_constraint(sym).func,
+        )
+        for sym in constraint_symbols
+    ]
     return problem.model_copy(
         update={
             "constraints": None,
-            "objectives": [
-                *problem.objectives,
-                Objective(
-                    name="Constraint",
-                    symbol=constraint_symbol,
-                    func=problem.get_constraint(constraint_symbol).func,
-                ),
-            ],
+            "objectives": [*problem.objectives, *extra_objectives],
         }
     )
 
@@ -63,7 +64,7 @@ def generate_front(
 
 def snakemake_main():
     problem_name = snakemake.wildcards.problem_name
-    constraint_symbol = snakemake.params.constraint_symbol
+    constraint_symbols = list(snakemake.params.constraint_symbols)
 
     out_path = str(snakemake.output[0])
 
@@ -74,7 +75,7 @@ def snakemake_main():
 
     problem = problem_fun()
 
-    bi_problem = setup_problem(problem, constraint_symbol)
+    multi_problem = setup_problem(problem, constraint_symbols)
 
     pop_size = snakemake.config["population_size_front"]
     n_generations = snakemake.config["n_generations_front"]
@@ -84,7 +85,7 @@ def snakemake_main():
     tournament_size = snakemake.config["tournament_size"]
 
     archive = generate_front(
-        bi_problem,
+        multi_problem,
         xover_probability=xover_probability,
         xover_distribution=xover_distribution,
         distribution_index=distribution_index,

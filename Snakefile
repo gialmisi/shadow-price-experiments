@@ -11,38 +11,41 @@ EXT = config["result_extension"]
 
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
 
+CT_LEVELS = ["low", "med", "high"]
+
+def thresholds_for_level(prob: dict, level: str) -> dict:
+    key = f"constraint_thresholds_{level}"
+    try:
+        return prob[key]
+    except KeyError as err:
+        raise KeyError(f"Problem '{prob.get('name', '<unknown>')}' missing key {key}") from err
+
 def param_combinations():
     """Cartesian sum of the wanted parameters."""
     for prob in config["problems"]:
         pname = prob["name"]
         for mode in config["modes"]:
-            for ct in prob["constraint_thresholds"]:
-                for pop_size in config["population_sizes"]:
-                    yield {
-                        "problem_name": pname,
-                        "mode": mode,
-                        "constraint_threshold": ct,
-                        "population_size": pop_size,
-                    }
-
-def constraint_threshold_str(ct: float) -> str:
-    """Constraint threshold to file name friendly str.
-    
-    Replaces dashes '-' with 'm' and dots '.' with 'p'.
-    """
-    return f"{ct}".replace("-", "m").replace(".", "p")
-
+            for level in CT_LEVELS:
+                    for pop_size in config["population_sizes"]:
+                        yield {
+                            "problem_name": pname,
+                            "mode": mode,
+                            "ct_level": level,
+                            "population_size": pop_size,
+                        }
 
 rule all:
     input:
+        # experiment data
         [
         os.path.join(
                 RESULTS_DIR,
                 "data",
-                f"{combo["problem_name"]}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}.{EXT}",
+                f"{combo["problem_name"]}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{combo['ct_level']}_psize{combo['population_size']}.{EXT}",
             )
             for combo in param_combinations()
         ] +
+        # Pareto front data
         [
         os.path.join(
                 RESULTS_DIR,
@@ -51,11 +54,12 @@ rule all:
             )
             for p in config["problems"]
         ] +
+        # summary statistics
         [
             os.path.join(
                 RESULTS_DIR,
                 "summary",
-                f"{combo['problem_name']}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{constraint_threshold_str(combo['constraint_threshold'])}_psize{combo['population_size']}_summary.{EXT}",
+                f"{combo['problem_name']}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{combo["ct_level"]}_psize{combo['population_size']}_summary.{EXT}",
             )
             for combo in param_combinations()
             if combo["problem_name"] in SUMMARY_PROBLEMS
@@ -66,24 +70,21 @@ rule generate_data:
         os.path.join(
             RESULTS_DIR,
             "data",
-            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}." + EXT,
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
         )
     log:
         os.path.join(
             RESULTS_DIR,
             "log",
-            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}.log"
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}.log"
         )
     params:
         n_generations=lambda wc: config["n_generations"],
         n_runs=lambda wc: config["n_runs"],
-        constraint_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbol"],
+        constraint_symbols=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbols"],
         objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
-        constraint_threshold=lambda wc: next(
-            ct
-            for ct in PROBLEM_BY_NAME[wc.problem_name]["constraint_thresholds"]
-            if constraint_threshold_str(ct) == wc.ct
-        ),
+        constraint_thresholds=lambda wc: thresholds_for_level(PROBLEM_BY_NAME[wc.problem_name], wc.ctlevel),
+        ct_level=lambda wc: wc.ctlevel
     script:
         DATA_GEN_SCRIPT
 
@@ -95,7 +96,8 @@ rule generate_pareto_front:
                 "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + '.' + EXT,
             )
     params:
-        constraint_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbol"],
+        constraint_symbols=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbols"],
+        objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"]
 
     script:
         FRONT_GEN_SCRIPT
@@ -106,7 +108,7 @@ rule summary_statistics:
         data=os.path.join(
             RESULTS_DIR,
             "data",
-            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}." + EXT,
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
         ),
         front=os.path.join(
             RESULTS_DIR,
@@ -117,23 +119,20 @@ rule summary_statistics:
         os.path.join(
             RESULTS_DIR,
             "summary",
-            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}_summary." + EXT,
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_summary." + EXT,
         )
-    params:
-        n_generations=lambda wc: config["n_generations"],
-        n_runs=lambda wc: config["n_runs"],
-        constraint_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbol"],
-        objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
-        constraint_threshold=lambda wc: next(
-            ct
-            for ct in PROBLEM_BY_NAME[wc.problem_name]["constraint_thresholds"]
-            if constraint_threshold_str(ct) == wc.ct
-        ),
     log:
         os.path.join(
             RESULTS_DIR,
             "log",
-            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ct}_psize{psize}_summary.log"
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_summary.log"
         )
+    params:
+        n_generations=lambda wc: config["n_generations"],
+        n_runs=lambda wc: config["n_runs"],
+        constraint_symbols=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbols"],
+        objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
+        constraint_thresholds=lambda wc: thresholds_for_level(PROBLEM_BY_NAME[wc.problem_name], wc.ctlevel),
+        ct_level=lambda wc: wc.ctlevel
     script:
         SUMMARY_STATS_SCRIPT

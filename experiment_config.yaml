@@ -15,10 +15,10 @@ distribution_index: 20
 
 # Data generation
 
-modes: ["baseline2", "relaxed", "ranking"]
+modes: ["baseline", "relaxed", "ranking"]
 population_sizes: [6, 12, 18]
 n_generations: 150
-n_runs: 1000
+n_runs: 500
 
 # Front generation
 
@@ -30,14 +30,18 @@ population_size_front: 1000
 
 problems:
   - name: "branin"
-    constraint_symbol: "c_1"
+    constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
-    constraint_thresholds: [0.27, 3.1, 10.1]
+    constraint_thresholds_low: { c_1: 0.27 }
+    constraint_thresholds_med: { c_1: 3.1 }
+    constraint_thresholds_high: { c_1: 10.1 }
 
   - name: "mystery"
-    constraint_symbol: "c_1"
+    constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
-    constraint_thresholds: [0.0023, 0.012, 0.024]
+    constraint_thresholds_low: { c_1: 0.0023 }
+    constraint_thresholds_med: { c_1: 0.012 }
+    constraint_thresholds_high: { c_1: 0.024 }
 
   # - name: "mishrasbird"
   # constraint_symbol: "c_1"

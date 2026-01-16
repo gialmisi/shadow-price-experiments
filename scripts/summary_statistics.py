@@ -8,11 +8,12 @@ from snakemake.script import snakemake
 from desdeo.tools.indicators_unary import hv
 
 
-def hv_from_front(front: list[dict] | None, ref: float = 1.0) -> float | None:
+def hv_from_front(front: list[dict] | None, dim_keys: list[str], ref: float = 1.0) -> float | None:
     """Compute hypervolume from a list of structs converted to python dicts by Polars."""
     if len(front) == 0:  # [] or None
         return None
-    pts = np.asarray([[p["f_norm"], p["c_norm"]] for p in front], dtype=float)
+
+    pts = np.asarray([[p[k] for k in dim_keys] for p in front], dtype=float)
     return float(hv(pts, ref))
 
 
@@ -21,12 +22,12 @@ def snakemake_main() -> None:
     front_path = str(snakemake.input["front"])
     out_path = str(snakemake.output[0])
 
-    objective_symbol = snakemake.params.objective_symbol
-    constraint_symbol = snakemake.params.constraint_symbol
-    ct_value = float(snakemake.params.constraint_threshold)
+    objective_symbol = str(snakemake.params.objective_symbol)
+    constraint_symbols = list(snakemake.params.constraint_symbols)
+    constraint_thresholds = dict(snakemake.params.constraint_thresholds)
 
     f_col = f"{objective_symbol}_min"
-    c_col = f"{constraint_symbol}"
+    c_cols = constraint_symbols
 
     df = pl.read_parquet(data_path)
     df_front = pl.read_parquet(front_path)
@@ -34,8 +35,9 @@ def snakemake_main() -> None:
     # best optimal stuff
 
     ## filter feasible solutions
+    feasible_expr = pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols])
     per_run_gen = df.group_by(["generation", "run"]).agg(
-        pl.when(pl.col(c_col) <= 0.0).then(pl.col(f_col)).otherwise(None).min().alias("gen_best_feasible")
+        pl.when(feasible_expr).then(pl.col(f_col)).otherwise(None).min().alias("gen_best_feasible")
     )
 
     ## take cumulative minimum over all generations in each run
@@ -81,37 +83,46 @@ def snakemake_main() -> None:
     ).sort("generation")
 
     # hypervolume stuff
-    reference_front = df_front.filter((pl.col(c_col) >= 0) & (pl.col(c_col) <= ct_value))
+    ref_filter = pl.all_horizontal(
+        [(pl.col(c) >= 0.0) & (pl.col(c) <= float(constraint_thresholds[c])) for c in c_cols]
+    )
+    reference_front = df_front.filter(ref_filter)
 
-    f_lo, c_lo = reference_front[f_col].min(), reference_front[c_col].min()
-    f_hi, c_hi = reference_front[f_col].max(), reference_front[c_col].max()
+    if reference_front.height == 0:
+        raise ValueError(
+            f"Reference front is empty after filtering by thresholds: {constraint_thresholds}. "
+            "Cannot normalize or compute HV."
+        )
 
-    mask = pl.col(f_col).is_between(f_lo, f_hi, closed="both") & pl.col(c_col).is_between(c_lo, c_hi, closed="both")
+    f_lo, f_hi = reference_front[f_col].min(), reference_front[f_col].max()
+    c_los = {c: reference_front[c].min() for c in c_cols}
+    c_his = {c: reference_front[c].max() for c in c_cols}
+
+    mask_terms = [pl.col(f_col).is_between(f_lo, f_hi, closed="both")]
+    mask_terms += [pl.col(c).is_between(c_los[c], c_his[c], closed="both") for c in c_cols]
+    mask = pl.all_horizontal(mask_terms)
+
+    norm_fields = [((pl.col(f_col) - f_lo) / (f_hi - f_lo)).clip(0.0, 1.0).alias("f_norm")]
+    for c in c_cols:
+        denom = c_his[c] - c_los[c]
+        norm_fields.append(((pl.col(c) - c_los[c]) / denom).clip(0.0, 1.0).alias(f"{c}_norm"))
+
     filtered = (
         df.group_by(["run", "generation"])
         .agg(
-            pl.struct(
-                [
-                    pl.col(f_col).alias("f"),
-                    pl.col(c_col).alias("c"),
-                ]
-            )
+            pl.struct([pl.col(f_col).alias("f"), *[pl.col(c).alias(c) for c in c_cols]])
             .filter(mask)
             .alias("shadow_front"),
-            pl.struct(
-                [
-                    ((pl.col(f_col) - f_lo) / (f_hi - f_lo)).clip(0.0, 1.0).alias("f_norm"),
-                    ((pl.col(c_col) - c_lo) / (c_hi - c_lo)).clip(0.0, 1.0).alias("c_norm"),
-                ]
-            )
-            .filter(mask)
-            .alias("shadow_front_norm"),
+            pl.struct(norm_fields).filter(mask).alias("shadow_front_norm"),
         )
         .sort(["run", "generation"])
     )
 
+    hv_keys = ["f_norm"] + [f"{c}_norm" for c in c_cols]
     filtered = filtered.with_columns(
-        pl.col("shadow_front_norm").map_elements(hv_from_front, return_dtype=pl.Float64).alias("hv")
+        pl.col("shadow_front_norm")
+        .map_elements(lambda front: hv_from_front(front, hv_keys), return_dtype=pl.Float64)
+        .alias("hv")
     )
 
     hv_summary = (

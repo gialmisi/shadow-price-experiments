@@ -34,10 +34,9 @@ PROBLEM_BUILDERS: dict[str, Callable[[], Problem]] = {
 def run_nsga2_with_mode(  # noqa: PLR0913
     problem: Problem,
     mode: str,
-    constraint_threshold: float,
+    constraints: dict[str, float],
     pop_size: int,
     n_generations: int,
-    constraint_symbol: str = "c_1",
     objective_symbol: str = "f_1",
 ) -> Archive:
     """Run the NSGA-II style EA once for a given constraint-handling mode."""
@@ -58,8 +57,7 @@ def run_nsga2_with_mode(  # noqa: PLR0913
     )
     nsga2_options.template.selection = selection.SingleObjectiveConstrainedRankingSelectorOptions(
         target_objective_symbol=objective_symbol,
-        target_constraint_symbol=constraint_symbol,
-        constraint_threshold=constraint_threshold,
+        constraints=constraints,
         population_size=pop_size,
         mode=mode,
     )
@@ -81,20 +79,18 @@ def run_nsga2_with_mode(  # noqa: PLR0913
 def single_run(  # noqa: PLR0913
     problem: Problem,
     mode: str,
-    constraint_threshold: float,
+    constraints: dict[str, float],
     pop_size: int,
     n_generations: int,
-    constraint_symbol: str,
     objective_symbol: str,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Run one EA and return (best_so_far_per_generation, all_solutions)."""
     archive = run_nsga2_with_mode(
         problem=problem,
         mode=mode,
-        constraint_threshold=constraint_threshold,
+        constraints=constraints,
         pop_size=pop_size,
         n_generations=n_generations,
-        constraint_symbol=constraint_symbol,
         objective_symbol=objective_symbol,
     )
 
@@ -107,13 +103,15 @@ def snakemake_main():
     mode = snakemake.wildcards.mode
     pop_size = int(snakemake.wildcards.psize)
 
-    ct_str = snakemake.wildcards.ct  # e.g. "0p5", mainly for logging if needed
+    ct_level = str(snakemake.params.ct_level)
 
     n_generations = snakemake.params.n_generations
     n_runs = snakemake.params.n_runs
-    constraint_symbol = snakemake.params.constraint_symbol
     objective_symbol = snakemake.params.objective_symbol
-    constraint_threshold = snakemake.params.constraint_threshold
+    constraint_symbols = list(snakemake.params.constraint_symbols)
+    constraint_thresholds = dict(snakemake.params.constraint_thresholds)
+
+    constraints = {sym: float(constraint_thresholds[sym]) for sym in constraint_symbols}
 
     out_path = str(snakemake.output[0])
 
@@ -128,16 +126,15 @@ def snakemake_main():
     for run_idx in range(n_runs):
         if run_idx % max(1, n_runs // 10) == 0:
             print(
-                f"[{problem_name}] mode={mode}, ct={constraint_threshold}, pop_size={pop_size}: run {run_idx + 1}/{n_runs}"
+                f"[{problem_name}] mode={mode}, ct_levels={constraint_thresholds}({ct_level}), pop_size={pop_size}: run {run_idx + 1}/{n_runs}"
             )
 
         solutions = single_run(
             problem=problem,
             mode=mode,
-            constraint_threshold=constraint_threshold,
+            constraints=constraints,
             pop_size=pop_size,
             n_generations=n_generations,
-            constraint_symbol=constraint_symbol,
             objective_symbol=objective_symbol,
         ).with_columns(pl.lit(run_idx).alias("run"))
 
@@ -148,11 +145,12 @@ def snakemake_main():
     parameters = f"""
         problem: {problem_name}
         mode: {mode}
-        constraint_threshold: {constraint_threshold} (encoded: {ct_str})
+        ct_level: {ct_level}
         pop_size: {pop_size}
         n_generations: {n_generations}
         n_runs: {n_runs}
-        constraint_symbol: {constraint_symbol}
+        constraint_symbols: {constraint_symbols}
+        constraint_thresholds: {constraint_thresholds}
         objective_symbol: {objective_symbol}
         """
 
@@ -164,7 +162,7 @@ def snakemake_main():
         },
     )
 
-    print(f"[{problem_name}] mode={mode}, ct={constraint_threshold}, pop_size={pop_size}: written {out_path}")
+    print(f"[{problem_name}] mode={mode}, ct_level={ct_level}, pop_size={pop_size}: written {out_path}")
 
 
 if __name__ == "__main__":
