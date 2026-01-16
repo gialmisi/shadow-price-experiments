@@ -4,6 +4,7 @@ results_dir: "results"
 data_gen_script: "scripts/experiment_1.py"
 front_gen_script: "scripts/generate_front.py"
 summary_stats_script: "scripts/summary_statistics.py"
+thresholds_script: "scripts/compute_thresholds.py"
 result_extension: "parquet"
 
 # NSGA2 options
@@ -26,22 +27,18 @@ n_generations_front: 10000
 population_size_front: 1000
 
 # List of all considered problems
-## threshold values, see constraint_violation_value_comp.ipynb
+threshold_improvement_percentages: [0.01, 0.05, 0.10] # low, med, high
 
 problems:
   - name: "branin"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
-    constraint_thresholds_low: { c_1: 0.27 }
-    constraint_thresholds_med: { c_1: 3.1 }
-    constraint_thresholds_high: { c_1: 10.1 }
+    objective_optimum: -268.78792
 
   - name: "mystery"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
-    constraint_thresholds_low: { c_1: 0.0023 }
-    constraint_thresholds_med: { c_1: 0.012 }
-    constraint_thresholds_high: { c_1: 0.024 }
+    objective_optimum: -1.174261
 
   # - name: "mishrasbird"
   # constraint_symbol: "c_1"

@@ -7,6 +7,8 @@ DATA_GEN_SCRIPT = config["data_gen_script"]
 FRONT_GEN_SCRIPT = config["front_gen_script"]
 SUMMARY_PROBLEMS = config["summary_problems"]
 SUMMARY_STATS_SCRIPT = config["summary_stats_script"]
+THRESHOLDS_SCRIPT = config["thresholds_script"]
+THRESH_PCTS = config["threshold_improvement_percentages"]
 EXT = config["result_extension"]
 
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
@@ -54,6 +56,12 @@ rule all:
             )
             for p in config["problems"]
         ] +
+        # Compute constraint thresholds
+        [
+            os.path.join(
+                RESULTS_DIR, "thresholds", f"{p['name']}.yaml"
+            ) for p in config["problems"]
+        ] +
         # summary statistics
         [
             os.path.join(
@@ -66,6 +74,8 @@ rule all:
         ]
 
 rule generate_data:
+    input:
+        thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml")
     output:
         os.path.join(
             RESULTS_DIR,
@@ -83,7 +93,6 @@ rule generate_data:
         n_runs=lambda wc: config["n_runs"],
         constraint_symbols=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbols"],
         objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
-        constraint_thresholds=lambda wc: thresholds_for_level(PROBLEM_BY_NAME[wc.problem_name], wc.ctlevel),
         ct_level=lambda wc: wc.ctlevel
     script:
         DATA_GEN_SCRIPT
@@ -102,9 +111,27 @@ rule generate_pareto_front:
     script:
         FRONT_GEN_SCRIPT
 
+rule compute_constraint_thresholds:
+    input:
+        front=os.path.join(
+            RESULTS_DIR,
+            "fronts",
+            "{problem_name}_gen" + str(config["n_generations_front"]) +
+            "_psize" + str(config["population_size_front"]) + "." + EXT,
+        )
+    output:
+        os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml")
+    params:
+        problem=lambda wc: PROBLEM_BY_NAME[wc.problem_name],
+        percents=lambda wc: config["threshold_improvement_percentages"],
+    log:
+        os.path.join(RESULTS_DIR, "log", "{problem_name}_thresholds.log")
+    script:
+        THRESHOLDS_SCRIPT
 
 rule summary_statistics:
     input:
+        thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
         data=os.path.join(
             RESULTS_DIR,
             "data",
@@ -132,7 +159,6 @@ rule summary_statistics:
         n_runs=lambda wc: config["n_runs"],
         constraint_symbols=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbols"],
         objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
-        constraint_thresholds=lambda wc: thresholds_for_level(PROBLEM_BY_NAME[wc.problem_name], wc.ctlevel),
         ct_level=lambda wc: wc.ctlevel
     script:
         SUMMARY_STATS_SCRIPT

@@ -2,6 +2,7 @@
 
 import numpy as np
 import polars as pl
+import yaml
 from scipy.stats import t
 from snakemake.script import snakemake
 
@@ -24,7 +25,13 @@ def snakemake_main() -> None:
 
     objective_symbol = str(snakemake.params.objective_symbol)
     constraint_symbols = list(snakemake.params.constraint_symbols)
-    constraint_thresholds = dict(snakemake.params.constraint_thresholds)
+    ct_level = str(snakemake.params.ct_level)
+
+    thresholds_path = str(snakemake.input["thresholds"])
+    with open(thresholds_path, "r", encoding="utf-8") as f:
+        thresholds_doc = yaml.safe_load(f)
+
+    constraints = dict(thresholds_doc["levels"][ct_level])
 
     f_col = f"{objective_symbol}_min"
     c_cols = constraint_symbols
@@ -83,15 +90,12 @@ def snakemake_main() -> None:
     ).sort("generation")
 
     # hypervolume stuff
-    ref_filter = pl.all_horizontal(
-        [(pl.col(c) >= 0.0) & (pl.col(c) <= float(constraint_thresholds[c])) for c in c_cols]
-    )
+    ref_filter = pl.all_horizontal([(pl.col(c) >= 0.0) & (pl.col(c) <= float(constraints[c])) for c in c_cols])
     reference_front = df_front.filter(ref_filter)
 
     if reference_front.height == 0:
         raise ValueError(
-            f"Reference front is empty after filtering by thresholds: {constraint_thresholds}. "
-            "Cannot normalize or compute HV."
+            f"Reference front is empty after filtering by thresholds: {constraints}. Cannot normalize or compute HV."
         )
 
     f_lo, f_hi = reference_front[f_col].min(), reference_front[f_col].max()

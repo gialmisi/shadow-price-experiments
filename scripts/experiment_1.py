@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 import polars as pl
+import yaml
 from snakemake.script import snakemake
 
 from desdeo.emo import (
@@ -108,10 +109,12 @@ def snakemake_main():
     n_generations = snakemake.params.n_generations
     n_runs = snakemake.params.n_runs
     objective_symbol = snakemake.params.objective_symbol
-    constraint_symbols = list(snakemake.params.constraint_symbols)
-    constraint_thresholds = dict(snakemake.params.constraint_thresholds)
 
-    constraints = {sym: float(constraint_thresholds[sym]) for sym in constraint_symbols}
+    thresholds_path = str(snakemake.input["thresholds"])
+    with open(thresholds_path, "r", encoding="utf-8") as f:
+        thresholds_doc = yaml.safe_load(f)
+
+    constraints = dict(thresholds_doc["levels"][ct_level])
 
     out_path = str(snakemake.output[0])
 
@@ -126,7 +129,7 @@ def snakemake_main():
     for run_idx in range(n_runs):
         if run_idx % max(1, n_runs // 10) == 0:
             print(
-                f"[{problem_name}] mode={mode}, ct_levels={constraint_thresholds}({ct_level}), pop_size={pop_size}: run {run_idx + 1}/{n_runs}"
+                f"[{problem_name}] mode={mode}, ct_levels={constraints}({ct_level}), pop_size={pop_size}: run {run_idx + 1}/{n_runs}"
             )
 
         solutions = single_run(
@@ -149,8 +152,7 @@ def snakemake_main():
         pop_size: {pop_size}
         n_generations: {n_generations}
         n_runs: {n_runs}
-        constraint_symbols: {constraint_symbols}
-        constraint_thresholds: {constraint_thresholds}
+        constraints: {constraints}
         objective_symbol: {objective_symbol}
         """
 
