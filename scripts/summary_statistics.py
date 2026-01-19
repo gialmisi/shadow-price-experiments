@@ -18,20 +18,22 @@ def hv_from_front(front: list[dict] | None, dim_keys: list[str], ref: float = 1.
     return float(hv(pts, ref))
 
 
-def snakemake_main() -> None:
+def snakemake_main() -> None:  # noqa: D103
     data_path = str(snakemake.input["data"])
     front_path = str(snakemake.input["front"])
     out_path = str(snakemake.output[0])
 
     objective_symbol = str(snakemake.params.objective_symbol)
-    constraint_symbols = list(snakemake.params.constraint_symbols)
     ct_level = str(snakemake.params.ct_level)
 
     thresholds_path = str(snakemake.input["thresholds"])
-    with open(thresholds_path, "r", encoding="utf-8") as f:
+    with open(thresholds_path, "r", encoding="utf-8") as f:  # noqa: PTH123, UP015
         thresholds_doc = yaml.safe_load(f)
 
-    constraints = dict(thresholds_doc["levels"][ct_level])
+    constraint_symbols = list(snakemake.params.constraint_symbols)
+    level_constraints = dict(thresholds_doc["levels"].get(ct_level, {}))
+
+    constraints = {c: float(level_constraints.get(c, 0.0)) for c in constraint_symbols}
 
     f_col = f"{objective_symbol}_min"
     c_cols = constraint_symbols
@@ -48,7 +50,7 @@ def snakemake_main() -> None:
     )
 
     ## take cumulative minimum over all generations in each run
-    inf = 1_000_000
+    inf = 1_000_000_000
     per_run_best_so_far = (
         per_run_gen.sort(["run", "generation"])
         .with_columns(pl.col("gen_best_feasible").fill_null(inf).cum_min().over("run").alias("run_best_so_far_raw"))
@@ -90,7 +92,17 @@ def snakemake_main() -> None:
     ).sort("generation")
 
     # hypervolume stuff
-    ref_filter = pl.all_horizontal([(pl.col(c) >= 0.0) & (pl.col(c) <= float(constraints[c])) for c in c_cols])
+    terms = []
+    for c in c_cols:
+        th_val = float(constraints[c])
+        if th_val > 0.0:
+            # relaxed
+            terms.append(pl.col(c) <= th_val)
+        else:
+            # not relaxed
+            terms.append(pl.col(c) <= 0.0)
+
+    ref_filter = pl.all_horizontal(terms)
     reference_front = df_front.filter(ref_filter)
 
     if reference_front.height == 0:

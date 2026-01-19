@@ -3,9 +3,40 @@
 from snakemake.script import snakemake
 from utils import PROBLEM_BUILDERS
 
-from desdeo.emo import algorithms, crossover, generator, mutation, scalar_selection, termination
+from desdeo.emo import algorithms, crossover, generator, mutation, scalar_selection, selection, termination
 from desdeo.emo.hooks.archivers import NonDominatedArchive
+from desdeo.emo.operators.selection import ReferenceVectorOptions
 from desdeo.problem import Objective, Problem
+
+
+def objective_from_constraint(problem: Problem, constraint_symbol: str) -> Objective:
+    """Create an Objective that evaluates exactly like the given constraint.
+
+    Works for both analytic constraints (func != None) and simulator-backed constraints
+    (func is None but simulator_path is set).
+    """
+    cons = problem.get_constraint(constraint_symbol)
+
+    if cons.func is not None:
+        return Objective(
+            name=f"Constraint_{constraint_symbol}",
+            symbol=constraint_symbol,
+            func=cons.func,
+        )
+
+    # Simulator-backed constraint (e.g., pymoo external problems)
+    if getattr(cons, "simulator_path", None) is not None:
+        return Objective(
+            name=f"Constraint_{constraint_symbol}",
+            symbol=constraint_symbol,
+            func=None,
+            simulator_path=cons.simulator_path,
+            objective_type="simulator",
+        )
+
+    raise ValueError(
+        f"Constraint '{constraint_symbol}' has neither 'func' nor 'simulator_path'. Cannot promote to objective."
+    )
 
 
 def setup_problem(problem: Problem, constraint_symbols: list[str]) -> Problem:
@@ -13,14 +44,7 @@ def setup_problem(problem: Problem, constraint_symbols: list[str]) -> Problem:
 
     Takes a single-objective optimization problem and setups one of its constraints as its second objective function.
     """
-    extra_objectives = [
-        Objective(
-            name=f"Constraint {sym}",
-            symbol=sym,
-            func=problem.get_constraint(sym).func,
-        )
-        for sym in constraint_symbols
-    ]
+    extra_objectives = [objective_from_constraint(problem, sym) for sym in constraint_symbols]
     return problem.model_copy(
         update={
             "constraints": None,
@@ -29,7 +53,7 @@ def setup_problem(problem: Problem, constraint_symbols: list[str]) -> Problem:
     )
 
 
-def generate_front(
+def _generate_front(
     problem: Problem,
     xover_probability: float,
     xover_distribution: float,
@@ -56,6 +80,41 @@ def generate_front(
     nsga2_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
 
     solver, extras = algorithms.emo_constructor(emo_options=nsga2_options, problem=problem)
+
+    _ = solver()
+
+    return extras.archive
+
+
+def generate_front(
+    problem: Problem,
+    xover_probability: float,
+    xover_distribution: float,
+    distribution_index: float,
+    tournament_size: int,
+    population_size: int,
+    n_generations: int,
+) -> NonDominatedArchive:
+    """Run NSGA3 to generate a front for a given problem."""
+    # setup
+    nsga3_options = algorithms.nsga3_options()
+
+    nsga3_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
+        xover_probability=xover_probability, xover_distribution=xover_distribution
+    )
+    nsga3_options.template.mutation = mutation.BoundedPolynomialMutationOptions(
+        mutation_probability=1.0 / len(problem.variables), distribution_index=distribution_index
+    )
+    nsga3_options.template.selection = selection.NSGA3SelectorOptions(
+        reference_vector_options=ReferenceVectorOptions(
+            number_of_vectors=population_size,
+        )
+    )
+
+    nsga3_options.template.generator = generator.LHSGeneratorOptions(n_points=population_size)
+    nsga3_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
+
+    solver, extras = algorithms.emo_constructor(emo_options=nsga3_options, problem=problem)
 
     _ = solver()
 

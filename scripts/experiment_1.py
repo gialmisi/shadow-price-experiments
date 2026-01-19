@@ -1,11 +1,11 @@
 """Experiment script, called by Snakemake."""
 
-from collections.abc import Callable
 from datetime import datetime
 
 import polars as pl
 import yaml
 from snakemake.script import snakemake
+from utils import PROBLEM_BUILDERS
 
 from desdeo.emo import (
     algorithms,
@@ -18,18 +18,6 @@ from desdeo.emo import (
 )
 from desdeo.emo.hooks.archivers import Archive
 from desdeo.problem import Problem
-from desdeo.problem.testproblems.single_objective import (
-    mishras_bird_constrained,
-    mystery_function,
-    new_branin_function,
-)
-
-# Map problem names from config / Snakefile to constructors
-PROBLEM_BUILDERS: dict[str, Callable[[], Problem]] = {
-    "branin": new_branin_function,
-    "mystery": mystery_function,
-    "mishrasbird": mishras_bird_constrained,
-}
 
 
 def run_nsga2_with_mode(  # noqa: PLR0913
@@ -109,12 +97,14 @@ def snakemake_main():
     n_generations = snakemake.params.n_generations
     n_runs = snakemake.params.n_runs
     objective_symbol = snakemake.params.objective_symbol
+    constraint_symbols = list(snakemake.params.constraint_symbols)
 
     thresholds_path = str(snakemake.input["thresholds"])
     with open(thresholds_path, "r", encoding="utf-8") as f:
         thresholds_doc = yaml.safe_load(f)
 
-    constraints = dict(thresholds_doc["levels"][ct_level])
+    level_constraints = dict(thresholds_doc["levels"][ct_level])
+    constraints = {sym: float(level_constraints[sym]) for sym in constraint_symbols if sym in level_constraints}
 
     out_path = str(snakemake.output[0])
 

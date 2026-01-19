@@ -1,6 +1,15 @@
-"""Compute constraint thresholds (low/med/high) from a Pareto/front parquet."""
+"""Compute constraint thresholds (low/med/high) from a Pareto/front parquet.
 
-import math
+Rule:
+- Use known true optimum f_opt (from config).
+- Consider points on the front with objective better than optimum (f < f_opt - eps).
+- For each constraint c_j:
+    if there exist such points with c_j > 0, define max_violation_j = max(c_j) over that subset
+    thresholds for low/med/high are p * max_violation_j for p in percents (e.g. 0.01/0.05/0.10)
+  else:
+    omit that constraint (no thresholds produced for it).
+"""
+
 from typing import Any
 
 import polars as pl
@@ -28,66 +37,75 @@ def snakemake_main() -> None:
 
     if "objective_optimum" not in prob:
         raise KeyError(
-            f"Problem '{problem_name}' missing 'objective_optimum'. "
-            "Add it to the YAML (recommended for reproducibility)."
+            f"Problem '{problem_name}' missing 'objective_optimum'. This threshold rule requires the known optimum."
         )
-    optimal_value = float(prob["objective_optimum"])
+    f_opt = float(prob["objective_optimum"])
 
-    df_front = pl.read_parquet(front_path)
+    # avoid treating floating noise as "better than optimum"
+    eps = max(1e-12, 1e-6 * max(1.0, abs(f_opt)))
 
-    # Keep only finite objective + constraint rows
-    cols_needed = [f_col] + constraint_symbols
+    df = pl.read_parquet(front_path)
+
+    # Require needed columns
+    cols_needed = [f_col, *constraint_symbols]
     for c in cols_needed:
-        if c not in df_front.columns:
+        if c not in df.columns:
             raise KeyError(
-                f"Column '{c}' missing from front parquet for '{problem_name}'. Available columns: {df_front.columns}"
+                f"Column '{c}' missing from front parquet for '{problem_name}'. Available columns: {df.columns}"
             )
 
-    front = df_front.select(cols_needed).drop_nulls().filter(pl.col(f_col).is_finite())
+    front = df.select(cols_needed).drop_nulls()
+    front = front.filter(pl.col(f_col).is_finite())
     for c in constraint_symbols:
         front = front.filter(pl.col(c).is_finite())
 
     if front.height == 0:
         raise ValueError(f"Front parquet '{front_path}' has no usable finite rows after filtering.")
 
-    # Normalize objective based on (ideal, nadir) of the front objective column
-    # minimization is assumed
-    f_ideal = float(front.select(pl.min(f_col)).item())
-    f_nadir = float(front.select(pl.max(f_col)).item())
-    if math.isclose(f_nadir, f_ideal):
-        raise ValueError(f"Cannot normalize: f_nadir == f_ideal == {f_ideal} for '{problem_name}'.")
+    # Improvement-eligible subset, better than optimum
+    eligible = front.filter(pl.col(f_col) < (pl.lit(f_opt) - pl.lit(eps)))
 
-    front_norm = front.with_columns(((pl.col(f_col) - f_ideal) / (f_nadir - f_ideal)).alias("f_norm"))
+    # constraints may be omitted if no evidence
+    levels_out: dict[str, dict[str, float]] = {lvl: {} for lvl in LEVELS}
+    evidence: dict[str, dict[str, Any]] = {}
 
-    norm_opt = (optimal_value - f_ideal) / (f_nadir - f_ideal)
+    for c in constraint_symbols:
+        # Evidence for this constraint, eligible points with positive violation
+        ev = eligible.filter(pl.col(c) > 0.0)
 
-    # Targets: percentage (i.e., 1%, 5%, 10%) improvement relative to optimum
-    targets = [norm_opt * (1.0 - float(p)) for p in percents]
+        n = ev.height
+        if n == 0:
+            evidence[c] = {"n": 0, "max_violation": None}
+            continue
 
-    # Find closest front row per target
-    levels_out: dict[str, dict[str, float]] = {}
-    for level, target in zip(LEVELS, targets, strict=True):
-        closest = (
-            front_norm.with_columns((pl.col("f_norm") - pl.lit(target)).abs().alias("delta")).sort("delta").head(1)
-        )
-        if closest.height != 1:
-            raise RuntimeError("Unexpected: failed to select closest row.")
+        max_v = float(ev.select(pl.max(c)).item())
+        if max_v <= 0.0:
+            evidence[c] = {"n": n, "max_violation": max_v}
+            continue
 
-        # Threshold per constraint = constraint value at this row (aligned across constraints)
-        level_thresholds = {c: float(closest.select(pl.col(c)).item()) for c in constraint_symbols}
-        levels_out[level] = level_thresholds
+        evidence[c] = {"n": n, "max_violation": max_v}
+
+        for lvl, p in zip(LEVELS, percents, strict=True):
+            t = float(p) * max_v
+
+            if t <= 0.0:
+                continue
+
+            levels_out[lvl][c] = t
 
     payload = {
         "problem": problem_name,
         "objective_symbol": objective_symbol,
         "f_col": f_col,
-        "objective_optimum": optimal_value,
-        "percents": percents,
+        "objective_optimum": f_opt,
+        "eps": eps,
+        "percents": [float(p) for p in percents],
+        "rule": "thresholds_from_positive_violations_on_optimum_improvers",
+        "evidence": evidence,
         "levels": levels_out,
     }
 
-    # Write out as yaml
-    with open(out_path, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8") as f:  # noqa: PTH123
         yaml.safe_dump(payload, f, sort_keys=False)
 
     print(f"[{problem_name}] wrote thresholds to {out_path}: {levels_out}")

@@ -7,7 +7,7 @@ summary_stats_script: "scripts/summary_statistics.py"
 thresholds_script: "scripts/compute_thresholds.py"
 result_extension: "parquet"
 
-# NSGA2 options
+# NSGA3 options for front generation
 
 xover_probability: 0.9
 xover_distribution: 20
@@ -24,11 +24,12 @@ n_runs: 500
 # Front generation
 
 n_generations_front: 10000
-population_size_front: 1000
+population_size_front: 200
 
 # List of all considered problems
-threshold_improvement_percentages: [0.01, 0.05, 0.10] # low, med, high
+threshold_improvement_percentages: [0.025, 0.05, 0.10] # low, med, high
 
+# Remember to update 'PROBLEM_BUILDERS' in utils.py when adding new problems!
 problems:
   - name: "branin"
     constraint_symbols: ["c_1"]
@@ -40,11 +41,58 @@ problems:
     objective_symbol: "f_1"
     objective_optimum: -1.174261
 
-  # - name: "mishrasbird"
-  # constraint_symbol: "c_1"
-  # objective_symbol: "f_1"
-  # constraint_thresholds: [1.0, 2.0, 3.0, 4.0, 5.0]
+  - name: "cantilevered_beam"
+    constraint_symbols: ["c_1", "c_2"]
+    objective_symbol: "f_1"
+    objective_optimum: 92.7693
+
+  - name: "pressure_vessel"
+    constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
+    objective_symbol: "f_1"
+    objective_optimum: 5.8853e+03
+
+  - name: "townsend"
+    constraint_symbols: ["c_1"]
+    objective_symbol: "f_1"
+    objective_optimum: -2.0239884
+
+  - name: "g2"
+    constraint_symbols: ["c_1", "c_2"]
+    objective_symbol: "f_1"
+    objective_optimum: -0.80361910412559
+
+  - name: "g6"
+    constraint_symbols: ["c_1", "c_2"]
+    objective_symbol: "f_1"
+    objective_optimum: -6961.81387558015
+
+  - name: "g8"
+    constraint_symbols: ["c_1", "c_2"]
+    objective_symbol: "f_1"
+    objective_optimum: -0.0958250414180359
+
+  - name: "g9"
+    constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
+    objective_symbol: "f_1"
+    objective_optimum: 680.630057374402
+
+  - name: "g24"
+    constraint_symbols: ["c_1", "c_2"]
+    objective_symbol: "f_1"
+    objective_optimum: -5.50801327159536
 
 ## problems for which summary statistics make sense
 
-summary_problems: ["branin", "mystery"]
+summary_problems:
+  [
+    "branin",
+    "mystery",
+    "cantilevered_beam",
+    "pressure_vessel",
+    "townsend",
+    "g2",
+    "g6",
+    "g8",
+    "g9",
+    "g24",
+  ]
