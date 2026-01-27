@@ -10,10 +10,16 @@ SUMMARY_STATS_SCRIPT = config["summary_stats_script"]
 THRESHOLDS_SCRIPT = config["thresholds_script"]
 THRESH_PCTS = config["threshold_improvement_percentages"]
 EXT = config["result_extension"]
+PLOT_SCRIPT = config["plot_script"]
 
+METRIC_KEYS = ["best_so_far", "hv"]
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
-
 CT_LEVELS = ["low", "med", "high"]
+
+wildcard_constraints:
+    problem_name="(" + "|".join(SUMMARY_PROBLEMS) + ")",
+    metric_key="(" + "|".join(METRIC_KEYS) + ")"
+
 
 def thresholds_for_level(prob: dict, level: str) -> dict:
     key = f"constraint_thresholds_{level}"
@@ -21,6 +27,7 @@ def thresholds_for_level(prob: dict, level: str) -> dict:
         return prob[key]
     except KeyError as err:
         raise KeyError(f"Problem '{prob.get('name', '<unknown>')}' missing key {key}") from err
+
 
 def param_combinations():
     """Cartesian sum of the wanted parameters."""
@@ -35,6 +42,24 @@ def param_combinations():
                             "ct_level": level,
                             "population_size": pop_size,
                         }
+
+
+def summary_inputs_and_meta(problem_name: str, metric_key: str):
+    # metric_key isn't needed for file paths, but keeps interface symmetric
+    meta = []
+    paths = []
+    for psize in config["population_sizes"]:
+        for ct in CT_LEVELS:
+            for mode in config["modes"]:
+                path = os.path.join(
+                    RESULTS_DIR,
+                    "summary",
+                    f"{problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_summary.{EXT}",
+                )
+                paths.append(path)
+                meta.append({"path": path, "psize": psize, "ctlevel": ct, "mode": mode})
+    return paths, meta
+
 
 rule all:
     input:
@@ -71,7 +96,18 @@ rule all:
             )
             for combo in param_combinations()
             if combo["problem_name"] in SUMMARY_PROBLEMS
+        ] +
+        # plots (one PDF per problem per metric)
+        [
+            os.path.join(
+                RESULTS_DIR, "figures",
+                f"{p['name']}__{m}_gen{config['n_generations']}_runs{config['n_runs']}_psizes{'-'.join(map(str, config['population_sizes']))}.pdf",
+            )
+            for p in config["problems"]
+            for m in METRIC_KEYS
+            if p["name"] in SUMMARY_PROBLEMS
         ]
+
 
 rule generate_data:
     input:
@@ -162,3 +198,32 @@ rule summary_statistics:
         ct_level=lambda wc: wc.ctlevel
     script:
         SUMMARY_STATS_SCRIPT
+
+rule plot_summary_figures:
+    input:
+        thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
+        summaries=lambda wc: summary_inputs_and_meta(wc.problem_name, wc.metric_key)[0],
+    output:
+        os.path.join(
+            RESULTS_DIR,
+            "figures",
+            "{problem_name}__{metric_key}_gen"
+            + str(config["n_generations"])
+            + "_runs"
+            + str(config["n_runs"])
+            + "_psizes"
+            + "-".join(map(str, config["population_sizes"]))
+            + ".pdf",
+        )
+    params:
+        problem=lambda wc: wc.problem_name,
+        metric_key=lambda wc: wc.metric_key,
+        population_sizes=lambda wc: config["population_sizes"],
+        ct_levels=lambda wc: CT_LEVELS,
+        modes=lambda wc: config["modes"],
+        n_generations=lambda wc: config["n_generations"],
+        n_runs=lambda wc: config["n_runs"],
+        plotting=lambda wc: config.get("plotting", {}),
+        summaries_meta=lambda wc: summary_inputs_and_meta(wc.problem_name, wc.metric_key)[1],
+    script:
+        PLOT_SCRIPT

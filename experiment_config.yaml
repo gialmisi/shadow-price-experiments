@@ -5,6 +5,7 @@ data_gen_script: "scripts/experiment_1.py"
 front_gen_script: "scripts/generate_front.py"
 summary_stats_script: "scripts/summary_statistics.py"
 thresholds_script: "scripts/compute_thresholds.py"
+plot_script: "scripts/plot_summary_figures.py"
 result_extension: "parquet"
 
 # NSGA3 options for front generation
@@ -35,7 +36,6 @@ problems:
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
     objective_optimum: -268.78792
-
   - name: "mystery"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
@@ -96,3 +96,55 @@ summary_problems:
     "g9",
     "g24",
   ]
+
+## Plotting settings
+plotting:
+  fig_width: 11.0
+  row_height: 3.2
+  ci_alpha: 0.18
+  gen_ticks: 7
+  grid_alpha: 0.25
+  grid_lw: 0.6
+
+  suptitle_y: 1.05
+  xlabel_y: -0.02
+
+  rcparams:
+    font.size: 10
+    axes.titlesize: 10
+    axes.labelsize: 10
+    legend.fontsize: 9
+    xtick.labelsize: 9
+    ytick.labelsize: 9
+    pdf.fonttype: 42
+    ps.fonttype: 42
+    figure.titlesize: 10
+
+  palette:
+    black: "#000000"
+    blue: "#0072B2"
+    orange: "#E69F00"
+    red: "#D55E00"
+
+  mode_style:
+    baseline:
+      { color: "#000000", linestyle: "-", linewidth: 2.0, label: "Baseline" }
+    relaxed:
+      { color: "#0072B2", linestyle: "--", linewidth: 2.0, label: "Relaxed" }
+    ranking:
+      { color: "#E69F00", linestyle: ":", linewidth: 2.2, label: "Ranking" }
+
+  optimum_line:
+    color: "#D55E00"
+    linestyle: "-"
+    linewidth: 1.6
+    label: "Optimum"
+
+  legend:
+    y: 1.03
+    frameon: true
+    facecolor: "white"
+    edgecolor: "black"
+    framealpha: 1.0
+    linewidth: 0.8
+    fancybox: false
