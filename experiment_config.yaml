@@ -22,6 +22,10 @@ population_sizes: [6, 12, 18]
 n_generations: 150
 n_runs: 500
 
+# Epsilon for approximating shadow front nadir point
+
+hv_eps_percent: 0.01
+
 # Front generation
 
 n_generations_front: 10000
@@ -31,6 +35,7 @@ population_size_front: 200
 threshold_improvement_percentages: [0.025, 0.05, 0.10] # low, med, high
 
 # Remember to update 'PROBLEM_BUILDERS' in utils.py when adding new problems!
+
 problems:
   - name: "branin"
     constraint_symbols: ["c_1"]
@@ -97,7 +102,7 @@ summary_problems:
     "g24",
   ]
 
-## Plotting settings
+# plotting settings
 plotting:
   fig_width: 11.0
   row_height: 3.2

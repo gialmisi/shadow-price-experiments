@@ -28,14 +28,12 @@ def snakemake_main() -> None:  # noqa: D103
     c_cols = constraint_symbols
     dim_cols = [f_col, *c_cols]
 
-    eps_percent = float(getattr(snakemake.params, "hv_eps_percent", 0.01))
+    eps_percent = float(snakemake.params.hv_eps_percent)
 
     df = pl.read_parquet(data_path)
     df_front = pl.read_parquet(front_path)
 
-    # ------------------------------------------------------------------
-    # Best feasible objective (unchanged logic)
-    # ------------------------------------------------------------------
+    # Best feasible objective
     feasible_expr = pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols])
     per_run_gen = df.group_by(["generation", "run"]).agg(
         pl.when(feasible_expr).then(pl.col(f_col)).otherwise(None).min().alias("gen_best_feasible")
@@ -80,9 +78,7 @@ def snakemake_main() -> None:  # noqa: D103
         ),
     ).sort("generation")
 
-    # ------------------------------------------------------------------
-    # Hypervolume reference point (problem-level, from df_front only)
-    # ------------------------------------------------------------------
+    # Hypervolume reference point from reference front
     def filter_relax_only(relaxed: str | None) -> pl.Expr:
         terms = []
         for c in c_cols:
@@ -95,14 +91,15 @@ def snakemake_main() -> None:  # noqa: D103
                     terms.append(pl.col(c) <= 0.0)
         return pl.all_horizontal(terms)
 
-    # A) best fully feasible -> objective component
+    # shadow front nadir approximation
+    # best fully feasible objective components
     cand_all = df_front.filter(filter_relax_only(relaxed=None))
     if cand_all.height == 0:
         raise ValueError("No points on df_front with all constraints enforced (c <= 0).")
 
     best_all = cand_all.sort(f_col).head(1)
 
-    # B) relax each constraint one by one -> constraint components
+    # relax each constraint one by one
     selected_rows = [best_all]
     best_relax = {}
 
@@ -122,7 +119,7 @@ def snakemake_main() -> None:  # noqa: D103
     ref_cs = [float(best_relax[ci][ci][0]) for ci in c_cols]
     ref = np.array([ref_f, *ref_cs], dtype=float)
 
-    # epsilon padding (local ranges)
+    # epsilon padding
     max_vals = sel.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0)
     min_vals = sel.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0)
     ranges = np.maximum(np.array(max_vals, float) - np.array(min_vals, float), 0.0)
@@ -130,9 +127,7 @@ def snakemake_main() -> None:  # noqa: D103
 
     hv_ind = moocore.Hypervolume(ref=ref, maximise=False)
 
-    # ------------------------------------------------------------------
-    # Hypervolume per (run, generation) – SIMPLE LOOP
-    # ------------------------------------------------------------------
+    # Hypervolume per (run, generation)
     rows = []
     for (run, gen), sub in df.group_by(["run", "generation"], maintain_order=True):
         pts = sub.select(dim_cols).to_numpy()
@@ -165,9 +160,7 @@ def snakemake_main() -> None:  # noqa: D103
         (pl.col("hv_mean") - pl.col("hv_t_crit") * pl.col("hv_stderr")).alias("hv_ci_lower"),
     )
 
-    # ------------------------------------------------------------------
     # Collate and save
-    # ------------------------------------------------------------------
     summary_all = summary.join(hv_summary, on="generation")
     summary_all.write_parquet(out_path)
 
