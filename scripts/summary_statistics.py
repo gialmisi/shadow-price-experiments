@@ -1,21 +1,11 @@
 """Compute per-generation summary statistics (HV mean/SE/CI) for one experiment file."""
 
+import moocore
 import numpy as np
 import polars as pl
 import yaml
 from scipy.stats import t
 from snakemake.script import snakemake
-
-from desdeo.tools.indicators_unary import hv
-
-
-def hv_from_front(front: list[dict] | None, dim_keys: list[str], ref: float = 1.0) -> float | None:
-    """Compute hypervolume from a list of structs converted to python dicts by Polars."""
-    if len(front) == 0:  # [] or None
-        return None
-
-    pts = np.asarray([[p[k] for k in dim_keys] for p in front], dtype=float)
-    return float(hv(pts, ref))
 
 
 def snakemake_main() -> None:  # noqa: D103
@@ -27,29 +17,30 @@ def snakemake_main() -> None:  # noqa: D103
     ct_level = str(snakemake.params.ct_level)
 
     thresholds_path = str(snakemake.input["thresholds"])
-    with open(thresholds_path, "r", encoding="utf-8") as f:  # noqa: PTH123, UP015
+    with open(thresholds_path, "r", encoding="utf-8") as f:  # noqa: PTH123
         thresholds_doc = yaml.safe_load(f)
 
     constraint_symbols = list(snakemake.params.constraint_symbols)
     level_constraints = dict(thresholds_doc["levels"].get(ct_level, {}))
-
-    constraints = {c: float(level_constraints.get(c, 0.0)) for c in constraint_symbols}
+    thresholds = {c: float(level_constraints.get(c, 0.0)) for c in constraint_symbols}
 
     f_col = f"{objective_symbol}_min"
     c_cols = constraint_symbols
+    dim_cols = [f_col, *c_cols]
+
+    eps_percent = float(getattr(snakemake.params, "hv_eps_percent", 0.01))
 
     df = pl.read_parquet(data_path)
     df_front = pl.read_parquet(front_path)
 
-    # best optimal stuff
-
-    ## filter feasible solutions
+    # ------------------------------------------------------------------
+    # Best feasible objective (unchanged logic)
+    # ------------------------------------------------------------------
     feasible_expr = pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols])
     per_run_gen = df.group_by(["generation", "run"]).agg(
         pl.when(feasible_expr).then(pl.col(f_col)).otherwise(None).min().alias("gen_best_feasible")
     )
 
-    ## take cumulative minimum over all generations in each run
     inf = 1_000_000_000
     per_run_best_so_far = (
         per_run_gen.sort(["run", "generation"])
@@ -62,7 +53,6 @@ def snakemake_main() -> None:  # noqa: D103
         )
     ).drop("run_best_so_far_raw")
 
-    ## compute standard error
     summary = (
         per_run_best_so_far.group_by("generation")
         .agg(
@@ -75,7 +65,6 @@ def snakemake_main() -> None:  # noqa: D103
         )
     ).sort("generation")
 
-    ## compute 95% confidence intervals
     summary = summary.with_columns(
         pl.when(pl.col("best_n_feasible_runs") > 1)
         .then(pl.Series("best_t_crit", t.ppf(0.975, summary["best_n_feasible_runs"] - 1)))
@@ -91,80 +80,83 @@ def snakemake_main() -> None:  # noqa: D103
         ),
     ).sort("generation")
 
-    # hypervolume stuff
-    terms = []
-    for c in c_cols:
-        th_val = float(constraints[c])
-        if th_val > 0.0:
-            # relaxed
-            terms.append(pl.col(c) <= th_val)
-        else:
-            # not relaxed
-            terms.append(pl.col(c) <= 0.0)
+    # ------------------------------------------------------------------
+    # Hypervolume reference point (problem-level, from df_front only)
+    # ------------------------------------------------------------------
+    def filter_relax_only(relaxed: str | None) -> pl.Expr:
+        terms = []
+        for c in c_cols:
+            if relaxed is None:
+                terms.append(pl.col(c) <= 0.0)
+            else:
+                if c == relaxed:
+                    terms.append(pl.col(c) <= float(thresholds.get(c, 0.0)))
+                else:
+                    terms.append(pl.col(c) <= 0.0)
+        return pl.all_horizontal(terms)
 
-    ref_filter = pl.all_horizontal(terms)
-    reference_front = df_front.filter(ref_filter)
+    # A) best fully feasible -> objective component
+    cand_all = df_front.filter(filter_relax_only(relaxed=None))
+    if cand_all.height == 0:
+        raise ValueError("No points on df_front with all constraints enforced (c <= 0).")
 
-    if reference_front.height == 0:
-        raise ValueError(
-            f"Reference front is empty after filtering by thresholds: {constraints}. Cannot normalize or compute HV."
-        )
+    best_all = cand_all.sort(f_col).head(1)
 
-    f_lo, f_hi = reference_front[f_col].min(), reference_front[f_col].max()
-    c_los = {c: reference_front[c].min() for c in c_cols}
-    c_his = {c: reference_front[c].max() for c in c_cols}
+    # B) relax each constraint one by one -> constraint components
+    selected_rows = [best_all]
+    best_relax = {}
 
-    mask_terms = [pl.col(f_col).is_between(f_lo, f_hi, closed="both")]
-    mask_terms += [pl.col(c).is_between(c_los[c], c_his[c], closed="both") for c in c_cols]
-    mask = pl.all_horizontal(mask_terms)
+    for ci in c_cols:
+        cand = df_front.filter(filter_relax_only(relaxed=ci))
+        if cand.height == 0:
+            raise ValueError(
+                f"No points when relaxing {ci} to <= {thresholds.get(ci, 0.0)} while enforcing others as <= 0."
+            )
+        row = cand.sort(f_col).head(1)
+        best_relax[ci] = row
+        selected_rows.append(row)
 
-    norm_fields = [((pl.col(f_col) - f_lo) / (f_hi - f_lo)).clip(0.0, 1.0).alias("f_norm")]
-    for c in c_cols:
-        denom = c_his[c] - c_los[c]
-        norm_fields.append(((pl.col(c) - c_los[c]) / denom).clip(0.0, 1.0).alias(f"{c}_norm"))
+    sel = pl.concat(selected_rows).unique()
 
-    filtered = (
-        df.group_by(["run", "generation"])
-        .agg(
-            pl.struct([pl.col(f_col).alias("f"), *[pl.col(c).alias(c) for c in c_cols]])
-            .filter(mask)
-            .alias("shadow_front"),
-            pl.struct(norm_fields).filter(mask).alias("shadow_front_norm"),
-        )
-        .sort(["run", "generation"])
-    )
+    ref_f = float(best_all[f_col][0])
+    ref_cs = [float(best_relax[ci][ci][0]) for ci in c_cols]
+    ref = np.array([ref_f, *ref_cs], dtype=float)
 
-    hv_keys = ["f_norm"] + [f"{c}_norm" for c in c_cols]
-    filtered = filtered.with_columns(
-        pl.col("shadow_front_norm")
-        .map_elements(lambda front: hv_from_front(front, hv_keys), return_dtype=pl.Float64)
-        .alias("hv")
-    )
+    # epsilon padding (local ranges)
+    max_vals = sel.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0)
+    min_vals = sel.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0)
+    ranges = np.maximum(np.array(max_vals, float) - np.array(min_vals, float), 0.0)
+    ref = ref + eps_percent * ranges
+
+    hv_ind = moocore.Hypervolume(ref=ref, maximise=False)
+
+    # ------------------------------------------------------------------
+    # Hypervolume per (run, generation) – SIMPLE LOOP
+    # ------------------------------------------------------------------
+    rows = []
+    for (run, gen), sub in df.group_by(["run", "generation"], maintain_order=True):
+        pts = sub.select(dim_cols).to_numpy()
+        pts = pts[(pts <= ref).all(axis=1)]  # ref-box filter
+
+        hv_val = 0.0 if pts.shape[0] == 0 else float(hv_ind(pts))
+        rows.append((int(run), int(gen), hv_val))
+
+    hv_df = pl.DataFrame(rows, schema=["run", "generation", "hv"]).sort(["run", "generation"])
 
     hv_summary = (
-        filtered.group_by("generation")
+        hv_df.group_by("generation")
         .agg(
             pl.col("hv").mean().alias("hv_mean"),
             pl.col("hv").std().alias("hv_std"),
-            pl.col("hv").count().alias("hv_n_supporting_runs"),
+            pl.col("hv").count().alias("hv_n_runs"),
         )
-        .with_columns(
-            pl.when(pl.col("hv_n_supporting_runs") > 1)
-            .then(pl.col("hv_std") / pl.col("hv_n_supporting_runs").sqrt())
-            .otherwise(None)
-            .alias("hv_stderr")
-        )
+        .with_columns((pl.col("hv_std") / pl.col("hv_n_runs").sqrt()).alias("hv_stderr"))
         .sort("generation")
     )
 
     hv_summary = hv_summary.with_columns(
-        pl.when(pl.col("hv_n_supporting_runs") > 1)
-        .then(
-            pl.Series(
-                "hv_t_crit",
-                t.ppf(0.975, hv_summary["hv_n_supporting_runs"] - 1),
-            )
-        )
+        pl.when(pl.col("hv_n_runs") > 1)
+        .then(pl.Series("hv_t_crit", t.ppf(0.975, hv_summary["hv_n_runs"] - 1)))
         .otherwise(None)
     )
 
@@ -173,9 +165,10 @@ def snakemake_main() -> None:  # noqa: D103
         (pl.col("hv_mean") - pl.col("hv_t_crit") * pl.col("hv_stderr")).alias("hv_ci_lower"),
     )
 
-    # collate and save
+    # ------------------------------------------------------------------
+    # Collate and save
+    # ------------------------------------------------------------------
     summary_all = summary.join(hv_summary, on="generation")
-
     summary_all.write_parquet(out_path)
 
 
@@ -183,8 +176,6 @@ if __name__ == "__main__":
     try:
         snakemake  # noqa: B018
     except Exception as err:
-        raise SystemExit(
-            "This script is intended to be run via Snakemake's `script:` directive, which injects a `snakemake` object."
-        ) from err
+        raise SystemExit("This script is intended to be run via Snakemake's `script:` directive.") from err
 
     snakemake_main()
