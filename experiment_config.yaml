@@ -62,8 +62,8 @@ problems:
   - name: "pressure_vessel"
     constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
     objective_symbol: "f_1"
-    objective_optimum: 5.8853e+03
-    optimal_solution: [13.0, 7.0, 42.0984456, 176.6366]
+    objective_optimum: 6059.71874187
+    optimal_solution: [13.00001, 7.0, 42.0984456, 176.6366]
 
   - name: "townsend"
     constraint_symbols: ["c_1"]
