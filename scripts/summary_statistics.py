@@ -17,7 +17,7 @@ def snakemake_main() -> None:  # noqa: D103
     ct_level = str(snakemake.params.ct_level)
 
     thresholds_path = str(snakemake.input["thresholds"])
-    with open(thresholds_path, "r", encoding="utf-8") as f:  # noqa: PTH123
+    with open(thresholds_path, encoding="utf-8") as f:  # noqa: PTH123
         thresholds_doc = yaml.safe_load(f)
 
     constraint_symbols = list(snakemake.params.constraint_symbols)
@@ -28,7 +28,7 @@ def snakemake_main() -> None:  # noqa: D103
     c_cols = constraint_symbols
     dim_cols = [f_col, *c_cols]
 
-    eps_percent = float(snakemake.params.hv_eps_percent)
+    eps_percent = float(snakemake.config["hv_eps_percent"])
 
     df = pl.read_parquet(data_path)
     df_front = pl.read_parquet(front_path)
@@ -77,6 +77,83 @@ def snakemake_main() -> None:  # noqa: D103
             "best_ci_lower"
         ),
     ).sort("generation")
+
+    # Shadow price: best objective in each generation using THRESHOLD-feasibility
+    # A point is "shadow-feasible" if all constraints satisfy c <= threshold[c]
+    shadow_feasible_expr = pl.all_horizontal([pl.col(c) <= float(thresholds[c]) for c in c_cols])
+
+    # Per (run, generation): best objective among shadow-feasible points in that generation
+    per_run_shadow_gen = df.group_by(["generation", "run"]).agg(
+        pl.when(shadow_feasible_expr).then(pl.col(f_col)).otherwise(None).min().alias("shadow_gen_best")
+    )
+
+    per_run_shadow_best_so_far = (
+        per_run_shadow_gen.sort(["run", "generation"])
+        .with_columns(pl.col("shadow_gen_best").fill_null(inf).cum_min().over("run").alias("shadow_best_so_far_raw"))
+        .with_columns(
+            pl.when(pl.col("shadow_best_so_far_raw") == inf)
+            .then(None)
+            .otherwise(pl.col("shadow_best_so_far_raw"))
+            .alias("shadow_best_so_far")
+        )
+        .drop("shadow_best_so_far_raw")
+    )
+
+    # Generation-wise summary for the "in a generation" shadow price
+    shadow_gen_summary = (
+        per_run_shadow_best_so_far.group_by("generation")
+        .agg(
+            pl.col("shadow_gen_best").mean().alias("shadow_gen_best_mean"),
+            pl.col("shadow_gen_best").std().alias("shadow_gen_best_std"),
+            pl.col("shadow_gen_best").count().alias("shadow_gen_best_n_runs"),
+        )
+        .with_columns(
+            (pl.col("shadow_gen_best_std") / pl.col("shadow_gen_best_n_runs").sqrt()).alias("shadow_gen_best_stderr")
+        )
+        .sort("generation")
+    )
+
+    shadow_gen_summary = shadow_gen_summary.with_columns(
+        pl.when(pl.col("shadow_gen_best_n_runs") > 1)
+        .then(pl.Series("shadow_gen_best_t_crit", t.ppf(0.975, shadow_gen_summary["shadow_gen_best_n_runs"] - 1)))
+        .otherwise(None)
+    ).with_columns(
+        (pl.col("shadow_gen_best_mean") + pl.col("shadow_gen_best_t_crit") * pl.col("shadow_gen_best_stderr")).alias(
+            "shadow_gen_best_ci_upper"
+        ),
+        (pl.col("shadow_gen_best_mean") - pl.col("shadow_gen_best_t_crit") * pl.col("shadow_gen_best_stderr")).alias(
+            "shadow_gen_best_ci_lower"
+        ),
+    )
+
+    # Summary for threshold-feasible best-so-far
+    shadow_best_summary = (
+        per_run_shadow_best_so_far.group_by("generation")
+        .agg(
+            pl.col("shadow_best_so_far").mean().alias("shadow_best_so_far_mean"),
+            pl.col("shadow_best_so_far").std().alias("shadow_best_so_far_std"),
+            pl.col("shadow_best_so_far").count().alias("shadow_best_so_far_n_runs"),
+        )
+        .with_columns(
+            (pl.col("shadow_best_so_far_std") / pl.col("shadow_best_so_far_n_runs").sqrt()).alias(
+                "shadow_best_so_far_stderr"
+            )
+        )
+        .sort("generation")
+    )
+
+    shadow_best_summary = shadow_best_summary.with_columns(
+        pl.when(pl.col("shadow_best_so_far_n_runs") > 1)
+        .then(pl.Series("shadow_best_t_crit", t.ppf(0.975, shadow_best_summary["shadow_best_so_far_n_runs"] - 1)))
+        .otherwise(None)
+    ).with_columns(
+        (pl.col("shadow_best_so_far_mean") + pl.col("shadow_best_t_crit") * pl.col("shadow_best_so_far_stderr")).alias(
+            "shadow_best_ci_upper"
+        ),
+        (pl.col("shadow_best_so_far_mean") - pl.col("shadow_best_t_crit") * pl.col("shadow_best_so_far_stderr")).alias(
+            "shadow_best_ci_lower"
+        ),
+    )
 
     # Hypervolume reference point from reference front
     def filter_relax_only(relaxed: str | None) -> pl.Expr:
@@ -161,7 +238,11 @@ def snakemake_main() -> None:  # noqa: D103
     )
 
     # Collate and save
-    summary_all = summary.join(hv_summary, on="generation")
+    summary_all = (
+        summary.join(shadow_gen_summary, on="generation")
+        .join(shadow_best_summary, on="generation")
+        .join(hv_summary, on="generation")
+    )
     summary_all.write_parquet(out_path)
 
 

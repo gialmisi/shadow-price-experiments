@@ -12,7 +12,7 @@ THRESH_PCTS = config["threshold_improvement_percentages"]
 EXT = config["result_extension"]
 PLOT_SCRIPT = config["plot_script"]
 
-METRIC_KEYS = ["best_so_far", "hv"]
+METRIC_KEYS = ["best_so_far", "hv", "shadow_gen_best", "shadow_best_so_far"]
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
 CT_LEVELS = ["low", "med", "high"]
 

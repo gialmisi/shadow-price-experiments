@@ -62,6 +62,14 @@ def snakemake_main() -> None:
     if front.height == 0:
         raise ValueError(f"Front parquet '{front_path}' has no usable finite rows after filtering.")
 
+    # Approximated optimum from reference front: best strictly feasible objective (c <= 0)
+    feasible_front = front.filter(pl.all_horizontal([pl.col(c) <= 0.0 for c in constraint_symbols]))
+
+    if feasible_front.height == 0:
+        objective_approximated_optimum = None
+    else:
+        objective_approximated_optimum = float(feasible_front.select(pl.min(f_col)).item())
+
     # Improvement-eligible subset, better than optimum
     eligible = front.filter(pl.col(f_col) < (pl.lit(f_opt) - pl.lit(eps)))
 
@@ -75,12 +83,18 @@ def snakemake_main() -> None:
 
         n = ev.height
         if n == 0:
+            # No positive violations for the current constraint, all levels set to 0.0 (default eligibility)
             evidence[c] = {"n": 0, "max_violation": None}
+
+            for lvl in LEVELS:
+                levels_out[lvl][c] = 0.0
+
             continue
 
         max_v = float(ev.select(pl.max(c)).item())
         if max_v <= 0.0:
             evidence[c] = {"n": n, "max_violation": max_v}
+
             continue
 
         evidence[c] = {"n": n, "max_violation": max_v}
@@ -93,11 +107,28 @@ def snakemake_main() -> None:
 
             levels_out[lvl][c] = t
 
+    # Objective shadow optimum from the reference front
+    def threshold_feasible_expr(level: str) -> pl.Expr:
+        # If a constraint has no level threshold produced, we treat it as 0.0 (normal feasibility)
+        return pl.all_horizontal(
+            [pl.col(c) <= pl.lit(float(levels_out.get(level, {}).get(c, 0.0))) for c in constraint_symbols]
+        )
+
+    shadow_optimum_by_level: dict[str, float | None] = {}
+    for lvl in LEVELS:
+        cand = front.filter(threshold_feasible_expr(lvl))
+        if cand.height == 0:
+            shadow_optimum_by_level[lvl] = None
+        else:
+            shadow_optimum_by_level[lvl] = float(cand.select(pl.min(f_col)).item())
+
     payload = {
         "problem": problem_name,
         "objective_symbol": objective_symbol,
         "f_col": f_col,
         "objective_optimum": f_opt,
+        "objective_approximated_optimum": objective_approximated_optimum,
+        "objective_shadow_optima": shadow_optimum_by_level,
         "eps": eps,
         "percents": [float(p) for p in percents],
         "rule": "thresholds_from_positive_violations_on_optimum_improvers",

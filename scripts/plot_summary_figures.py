@@ -1,4 +1,4 @@
-"""."""
+"""Plot per-generation summary statistics for one problem as a psize x ct grid."""
 
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,7 @@ METRICS: dict[str, dict[str, str]] = {
         "ytitle": "Best-so-far feasible objective",
         "title": "Best-so-far (feasible) objective",
         "slug": "best_so_far",
+        "optimum_key": "objective_optimum",  # scalar
     },
     "hv": {
         "mean": "hv_mean",
@@ -26,6 +27,25 @@ METRICS: dict[str, dict[str, str]] = {
         "ytitle": "Hypervolume",
         "title": "Hypervolume",
         "slug": "hv",
+        "optimum_key": "",  # no optimum line
+    },
+    "shadow_gen_best": {
+        "mean": "shadow_gen_best_mean",
+        "lower": "shadow_gen_best_ci_lower",
+        "upper": "shadow_gen_best_ci_upper",
+        "ytitle": "Best (threshold-feasible) objective in generation",
+        "title": "Shadow price per generation (threshold-feasible)",
+        "slug": "shadow_gen_best",
+        "optimum_key": "objective_shadow_optima",  # dict by ct level
+    },
+    "shadow_best_so_far": {
+        "mean": "shadow_best_so_far_mean",
+        "lower": "shadow_best_ci_lower",
+        "upper": "shadow_best_ci_upper",
+        "ytitle": "Best-so-far (threshold-feasible) objective",
+        "title": "Shadow price best-so-far (threshold-feasible)",
+        "slug": "shadow_best_so_far",
+        "optimum_key": "objective_shadow_optima",  # dict by ct level
     },
 }
 
@@ -38,18 +58,36 @@ def _read_series(file_path: str, metric_spec: dict[str, str]) -> pl.DataFrame:
     )
 
 
-def _load_optimum(thresholds_yaml: str) -> float | None:
+def _load_thresholds_doc(thresholds_yaml: str) -> dict:
     with open(thresholds_yaml, encoding="utf-8") as f:  # noqa: PTH123
-        doc = yaml.safe_load(f)
-    val = doc.get("objective_optimum", None)
-    return None if val is None else float(val)
+        return yaml.safe_load(f)
+
+
+def _get_optimum(doc: dict, metric_spec: dict[str, str], ctlevel: str) -> float | None:
+    """Return optimum value for the given metric and ctlevel, or None if not applicable/missing."""
+    key = str(metric_spec.get("optimum_key", "")).strip()
+    if not key:
+        return None
+
+    if key == "objective_optimum":
+        v = doc.get("objective_optimum", None)
+        return None if v is None else float(v)
+
+    if key == "objective_shadow_optima":
+        d = doc.get("objective_shadow_optima", None)
+        if not isinstance(d, dict):
+            return None
+        v = d.get(ctlevel, None)
+        return None if v is None else float(v)
+
+    raise KeyError(f"Unknown optimum_key='{key}' in metric spec.")
 
 
 def snakemake_main() -> None:
     out_path = str(snakemake.output[0])
 
     thresholds_yaml = str(snakemake.input["thresholds"])
-    # Not strictly needed if you use meta->path mapping, but keep for Snakemake tracking:
+    # Keep for Snakemake tracking:
     summary_paths = list(map(str, snakemake.input["summaries"]))
 
     problem = str(snakemake.params["problem"])
@@ -64,6 +102,9 @@ def snakemake_main() -> None:
 
     plot_cfg: dict[str, Any] = dict(snakemake.params.get("plotting", {}))
     metric_spec = METRICS[metric_key]
+
+    # Load thresholds doc once (for optimum lines)
+    thr_doc = _load_thresholds_doc(thresholds_yaml)
 
     # Apply rcParams from config
     rcparams = dict(plot_cfg.get("rcparams", {}))
@@ -99,7 +140,6 @@ def snakemake_main() -> None:
             continue
         index[(int(item["psize"]), str(item["ctlevel"]), str(item["mode"]))] = p
 
-    objective_optimum = _load_optimum(thresholds_yaml) if metric_key == "best_so_far" else None
     opt_style = plot_cfg.get("optimum_line", {})
     opt_color = str(opt_style.get("color", palette.get("red", "#D55E00")))
     opt_ls = str(opt_style.get("linestyle", "-"))
@@ -164,10 +204,10 @@ def snakemake_main() -> None:
                     zorder=2,
                 )
 
-            if objective_optimum is not None:
-                ax.axhline(
-                    objective_optimum, color=opt_color, linestyle=opt_ls, linewidth=opt_lw, zorder=1, label=opt_label
-                )
+            # Metric-specific optimum line (best_so_far uses scalar; shadow uses ct-specific dict)
+            opt = _get_optimum(thr_doc, metric_spec, ct)
+            if opt is not None:
+                ax.axhline(opt, color=opt_color, linestyle=opt_ls, linewidth=opt_lw, zorder=1, label=opt_label)
 
             ax.set_xlim(0, n_generations)
             ax.xaxis.set_major_locator(FixedLocator(gen_ticks))

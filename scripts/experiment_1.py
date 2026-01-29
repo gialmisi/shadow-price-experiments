@@ -26,10 +26,12 @@ def run_nsga2_with_mode(  # noqa: PLR0913
     constraints: dict[str, float],
     pop_size: int,
     n_generations: int,
+    seed: int,
     objective_symbol: str = "f_1",
 ) -> Archive:
     """Run the NSGA-II style EA once for a given constraint-handling mode."""
     nsga2_options = algorithms.nsga2_options()
+    nsga2_options.template.seed = seed
 
     nsga2_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
         xover_probability=snakemake.config["xover_probability"],
@@ -72,6 +74,7 @@ def single_run(  # noqa: PLR0913
     pop_size: int,
     n_generations: int,
     objective_symbol: str,
+    seed: int,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Run one EA and return (best_so_far_per_generation, all_solutions)."""
     archive = run_nsga2_with_mode(
@@ -80,6 +83,7 @@ def single_run(  # noqa: PLR0913
         constraints=constraints,
         pop_size=pop_size,
         n_generations=n_generations,
+        seed=seed,
         objective_symbol=objective_symbol,
     )
 
@@ -98,6 +102,7 @@ def snakemake_main():
     n_runs = snakemake.params.n_runs
     objective_symbol = snakemake.params.objective_symbol
     constraint_symbols = list(snakemake.params.constraint_symbols)
+    base_seed = int(snakemake.config["base_seed"])
 
     thresholds_path = str(snakemake.input["thresholds"])
     with open(thresholds_path, "r", encoding="utf-8") as f:
@@ -117,9 +122,11 @@ def snakemake_main():
     solutions_results: pl.DataFrame | None = None
 
     for run_idx in range(n_runs):
+        run_seed = base_seed + run_idx
+
         if run_idx % max(1, n_runs // 10) == 0:
             print(
-                f"[{problem_name}] mode={mode}, ct_levels={constraints}({ct_level}), pop_size={pop_size}: run {run_idx + 1}/{n_runs}"
+                f"[{problem_name}] mode={mode}, ct_levels={constraints}({ct_level}), pop_size={pop_size}: run {run_idx + 1}/{n_runs} (seed: {run_seed})"
             )
 
         solutions = single_run(
@@ -129,7 +136,8 @@ def snakemake_main():
             pop_size=pop_size,
             n_generations=n_generations,
             objective_symbol=objective_symbol,
-        ).with_columns(pl.lit(run_idx).alias("run"))
+            seed=run_seed,
+        ).with_columns(pl.lit(run_idx).alias("run"), pl.lit(run_seed).alias("seed"))
 
         solutions_results = solutions if solutions_results is None else pl.concat([solutions_results, solutions])
 
@@ -144,6 +152,7 @@ def snakemake_main():
         n_runs: {n_runs}
         constraints: {constraints}
         objective_symbol: {objective_symbol}
+        seed: {run_seed}
         """
 
     solutions_results.write_parquet(

@@ -7,6 +7,7 @@ summary_stats_script: "scripts/summary_statistics.py"
 thresholds_script: "scripts/compute_thresholds.py"
 plot_script: "scripts/plot_summary_figures.py"
 result_extension: "parquet"
+base_seed: 28012026
 
 # NSGA3 options for front generation
 
@@ -19,8 +20,8 @@ distribution_index: 20
 
 modes: ["baseline", "relaxed", "ranking"]
 population_sizes: [6, 12, 18]
-n_generations: 150
-n_runs: 500
+n_generations: 200
+n_runs: 250
 
 # Epsilon for approximating shadow front nadir point
 
@@ -32,7 +33,7 @@ n_generations_front: 10000
 population_size_front: 200
 
 # List of all considered problems
-threshold_improvement_percentages: [0.025, 0.05, 0.10] # low, med, high
+threshold_improvement_percentages: [0.05, 0.10, 0.20] # low, med, high
 
 # Remember to update 'PROBLEM_BUILDERS' in utils.py when adding new problems!
 
