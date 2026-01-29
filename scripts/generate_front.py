@@ -1,20 +1,19 @@
 """Script to run with Snakemake to generate Pareto fronts for problems."""
 
+import numpy as np
+import polars as pl
 from snakemake.script import snakemake
 from utils import PROBLEM_BUILDERS
 
-from desdeo.emo import algorithms, crossover, generator, mutation, scalar_selection, selection, termination
+from desdeo.emo import algorithms, crossover, mutation, selection, termination
 from desdeo.emo.hooks.archivers import NonDominatedArchive
 from desdeo.emo.operators.selection import ReferenceVectorOptions
+from desdeo.emo.options.generator import SeededHybridGeneratorOptions
 from desdeo.problem import Objective, Problem
 
 
 def objective_from_constraint(problem: Problem, constraint_symbol: str) -> Objective:
-    """Create an Objective that evaluates exactly like the given constraint.
-
-    Works for both analytic constraints (func != None) and simulator-backed constraints
-    (func is None but simulator_path is set).
-    """
+    """Create an Objective that evaluates exactly like the given constraint."""
     cons = problem.get_constraint(constraint_symbol)
 
     if cons.func is not None:
@@ -24,7 +23,6 @@ def objective_from_constraint(problem: Problem, constraint_symbol: str) -> Objec
             func=cons.func,
         )
 
-    # Simulator-backed constraint (e.g., pymoo external problems)
     if getattr(cons, "simulator_path", None) is not None:
         return Objective(
             name=f"Constraint_{constraint_symbol}",
@@ -40,10 +38,7 @@ def objective_from_constraint(problem: Problem, constraint_symbol: str) -> Objec
 
 
 def setup_problem(problem: Problem, constraint_symbols: list[str]) -> Problem:
-    """Takes a single-objective optimization problem and setups one...
-
-    Takes a single-objective optimization problem and setups one of its constraints as its second objective function.
-    """
+    """Promote selected constraints to objectives and drop constraints."""
     extra_objectives = [objective_from_constraint(problem, sym) for sym in constraint_symbols]
     return problem.model_copy(
         update={
@@ -53,78 +48,67 @@ def setup_problem(problem: Problem, constraint_symbols: list[str]) -> Problem:
     )
 
 
-def _generate_front(
-    problem: Problem,
-    xover_probability: float,
-    xover_distribution: float,
-    distribution_index: float,
-    tournament_size: int,
-    population_size: int,
-    n_generations: int,
-) -> NonDominatedArchive:
-    """Run NSGA2 to generate a front for a given problem."""
-    # setup
-    nsga2_options = algorithms.nsga2_options()
-
-    nsga2_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
-        xover_probability=xover_probability, xover_distribution=xover_distribution
-    )
-    nsga2_options.template.mutation = mutation.BoundedPolynomialMutationOptions(
-        mutation_probability=1.0 / len(problem.variables), distribution_index=distribution_index
-    )
-    nsga2_options.template.mate_selection = scalar_selection.TournamentSelectionOptions(
-        name="TournamentSelection", tournament_size=tournament_size, winner_size=population_size
-    )
-
-    nsga2_options.template.generator = generator.LHSGeneratorOptions(n_points=population_size)
-    nsga2_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
-
-    solver, extras = algorithms.emo_constructor(emo_options=nsga2_options, problem=problem)
-
-    _ = solver()
-
-    return extras.archive
+def _seed_solution_from_config(problem: Problem, problem_name: str) -> pl.DataFrame:
+    """Get the seed solution (1 row) for this problem from the experiment config."""
+    probs = snakemake.config.get("problems", [])
+    for p in probs:
+        if p.get("name") == problem_name:
+            seed_solution_ = p.get("optimal_solution", None)
+            if seed_solution_ is None:
+                raise ValueError(f"Missing 'optimal_solution' for problem '{problem_name}' in config.")
+            return pl.DataFrame(
+                np.atleast_2d(seed_solution_),
+                schema=[v.symbol for v in problem.variables],
+            )
+    raise ValueError(f"Problem '{problem_name}' not found in config['problems'].")
 
 
 def generate_front(
     problem: Problem,
+    seed_solution: pl.DataFrame,
     xover_probability: float,
     xover_distribution: float,
     distribution_index: float,
-    tournament_size: int,
     population_size: int,
     n_generations: int,
+    perturb_fraction: float = 0.2,
+    sigma: float = 0.02,
+    flip_prob: float = 0.1,
 ) -> NonDominatedArchive:
-    """Run NSGA3 to generate a front for a given problem."""
-    # setup
+    """Run NSGA-III to generate a (seeded) reference front for a given problem."""
     nsga3_options = algorithms.nsga3_options()
 
     nsga3_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
-        xover_probability=xover_probability, xover_distribution=xover_distribution
+        xover_probability=xover_probability,
+        xover_distribution=xover_distribution,
     )
     nsga3_options.template.mutation = mutation.BoundedPolynomialMutationOptions(
-        mutation_probability=1.0 / len(problem.variables), distribution_index=distribution_index
+        mutation_probability=1.0 / len(problem.variables),
+        distribution_index=distribution_index,
     )
     nsga3_options.template.selection = selection.NSGA3SelectorOptions(
-        reference_vector_options=ReferenceVectorOptions(
-            number_of_vectors=population_size,
-        )
+        reference_vector_options=ReferenceVectorOptions(number_of_vectors=population_size)
     )
 
-    nsga3_options.template.generator = generator.LHSGeneratorOptions(n_points=population_size)
+    # Seeded hybrid initial population
+    nsga3_options.template.generator = SeededHybridGeneratorOptions(
+        n_points=population_size,
+        seed_solution=seed_solution,
+        perturb_fraction=perturb_fraction,
+        sigma=sigma,
+        flip_prob=flip_prob,
+    )
+
     nsga3_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
 
     solver, extras = algorithms.emo_constructor(emo_options=nsga3_options, problem=problem)
-
     _ = solver()
-
     return extras.archive
 
 
 def snakemake_main():
     problem_name = snakemake.wildcards.problem_name
     constraint_symbols = list(snakemake.params.constraint_symbols)
-
     out_path = str(snakemake.output[0])
 
     try:
@@ -133,6 +117,7 @@ def snakemake_main():
         raise ValueError(f"Unknown problem '{problem_name}'. Add it to PROBLEM_BUILDERS in run_experiment.py.") from err
 
     problem = problem_fun()
+    seed_solution = _seed_solution_from_config(problem, problem_name)
 
     multi_problem = setup_problem(problem, constraint_symbols)
 
@@ -141,16 +126,21 @@ def snakemake_main():
     xover_distribution = snakemake.config["xover_distribution"]
     xover_probability = snakemake.config["xover_probability"]
     distribution_index = snakemake.config["distribution_index"]
-    tournament_size = snakemake.config["tournament_size"]
+    perturb_fraction = snakemake.config["seed_perturb_fraction"]
+    sigma = snakemake.config["seed_sigma"]
+    flip_prob = snakemake.config["seed_flip_prob"]
 
     archive = generate_front(
         multi_problem,
+        seed_solution=seed_solution,
         xover_probability=xover_probability,
         xover_distribution=xover_distribution,
         distribution_index=distribution_index,
-        tournament_size=tournament_size,
         population_size=pop_size,
         n_generations=n_generations,
+        perturb_fraction=perturb_fraction,
+        sigma=sigma,
+        flip_prob=flip_prob,
     )
 
     archive.solutions.write_parquet(out_path)

@@ -31,6 +31,9 @@ hv_eps_percent: 0.01
 
 n_generations_front: 10000
 population_size_front: 200
+seed_perturb_fraction: 0.2
+seed_sigma: 0.02
+seed_flip_prob: 0.1
 
 # List of all considered problems
 threshold_improvement_percentages: [0.05, 0.10, 0.20] # low, med, high
@@ -42,50 +45,92 @@ problems:
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
     objective_optimum: -268.78792
+    optimal_solution: [3.2730, 0.0489]
+
   - name: "mystery"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
     objective_optimum: -1.174261
+    optimal_solution: [2.5044, 2.5778]
 
   - name: "cantilevered_beam"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: 92.7693
+    optimal_solution: [9.4846, 0.1, 0.1, 7.0]
 
   - name: "pressure_vessel"
     constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
     objective_symbol: "f_1"
     objective_optimum: 5.8853e+03
+    optimal_solution: [13.0, 7.0, 42.0984456, 176.6366]
 
   - name: "townsend"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
     objective_optimum: -2.0239884
+    optimal_solution: [2.0052938, 1.1944509]
 
   - name: "g2"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -0.80361910412559
+    optimal_solution:
+      [
+        3.16246061572185,
+        3.12833142812967,
+        3.09479212988791,
+        3.06145059523469,
+        3.02792915885555,
+        2.99382606701730,
+        2.95866871765285,
+        2.92184227312450,
+        0.49482511456933,
+        0.48835711005490,
+        0.48231642711865,
+        0.47664475092742,
+        0.47129550835493,
+        0.46623099264167,
+        0.46142004984199,
+        0.45683664767217,
+        0.45245876903267,
+        0.44826762241853,
+        0.44424700958760,
+        0.44038285956317,
+      ]
 
   - name: "g6"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -6961.81387558015
+    optimal_solution: [14.095, 0.8429607892154802]
 
   - name: "g8"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -0.0958250414180359
+    optimal_solution: [1.22797135260752599, 4.24537336612274885]
 
   - name: "g9"
     constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
     objective_symbol: "f_1"
     objective_optimum: 680.630057374402
+    optimal_solution:
+      [
+        2.33049949323300210,
+        1.95137239646596039,
+        -0.47754041766198602,
+        4.36572612852776931,
+        -0.62448707583702823,
+        1.03813092302119347,
+        1.59422663221959926,
+      ]
 
   - name: "g24"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -5.50801327159536
+    optimal_solution: [2.329520197477607, 3.17849307411768]
 
 ## problems for which summary statistics make sense
 
