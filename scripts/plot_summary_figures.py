@@ -19,6 +19,7 @@ METRICS: dict[str, dict[str, str]] = {
         "title": "Best-so-far (feasible) objective",
         "slug": "best_so_far",
         "optimum_key": "objective_optimum",  # scalar
+        "count_col": "best_n_feasible_runs",
     },
     "hv": {
         "mean": "hv_mean",
@@ -28,6 +29,7 @@ METRICS: dict[str, dict[str, str]] = {
         "title": "Hypervolume",
         "slug": "hv",
         "optimum_key": "",  # no optimum line
+        "count_col": "hv_n_runs",
     },
     "shadow_gen_best": {
         "mean": "shadow_gen_best_mean",
@@ -37,6 +39,7 @@ METRICS: dict[str, dict[str, str]] = {
         "title": "Shadow price per generation (threshold-feasible)",
         "slug": "shadow_gen_best",
         "optimum_key": "objective_shadow_optima",  # dict by ct level
+        "count_col": "shadow_gen_best_n_runs",
     },
     "shadow_best_so_far": {
         "mean": "shadow_best_so_far_mean",
@@ -46,16 +49,26 @@ METRICS: dict[str, dict[str, str]] = {
         "title": "Shadow price best-so-far (threshold-feasible)",
         "slug": "shadow_best_so_far",
         "optimum_key": "objective_shadow_optima",  # dict by ct level
+        "count_col": "shadow_best_so_far_n_runs",
+    },
+    "shadow_price_diff": {
+        "mean": "shadow_price_diff_mean",
+        "lower": "shadow_price_diff_ci_lower",
+        "upper": "shadow_price_diff_ci_upper",
+        "ytitle": "Shadow price (difference)",
+        "title": "Shadow price difference (feasible - threshold-feasible)",
+        "slug": "shadow_price_diff",
+        "optimum_key": "true_shadow_price",
+        "count_col": "shadow_price_diff_n_runs",
     },
 }
 
 
 def _read_series(file_path: str, metric_spec: dict[str, str]) -> pl.DataFrame:
-    return (
-        pl.read_parquet(file_path)
-        .select(["generation", metric_spec["mean"], metric_spec["lower"], metric_spec["upper"]])
-        .sort("generation")
-    )
+    cols = ["generation", metric_spec["mean"], metric_spec["lower"], metric_spec["upper"]]
+    if metric_spec.get("count_col"):
+        cols.append(metric_spec["count_col"])
+    return pl.read_parquet(file_path).select(cols).sort("generation")
 
 
 def _load_thresholds_doc(thresholds_yaml: str) -> dict:
@@ -70,15 +83,25 @@ def _get_optimum(doc: dict, metric_spec: dict[str, str], ctlevel: str) -> float 
         return None
 
     if key == "objective_optimum":
-        v = doc.get("objective_optimum", None)
+        v = doc.get("objective_optimum")
         return None if v is None else float(v)
 
     if key == "objective_shadow_optima":
-        d = doc.get("objective_shadow_optima", None)
+        d = doc.get("objective_shadow_optima")
         if not isinstance(d, dict):
             return None
         v = d.get(ctlevel, None)
         return None if v is None else float(v)
+
+    if key == "true_shadow_price":
+        f_opt = doc.get("objective_optimum")
+        d = doc.get("objective_shadow_optima")
+        if f_opt is None or not isinstance(d, dict):
+            return None
+        shadow_opt = d.get(ctlevel, None)
+        if shadow_opt is None:
+            return None
+        return float(f_opt) - float(shadow_opt)
 
     raise KeyError(f"Unknown optimum_key='{key}' in metric spec.")
 
@@ -146,15 +169,30 @@ def snakemake_main() -> None:
     opt_lw = float(opt_style.get("linewidth", 1.6))
     opt_label = str(opt_style.get("label", "Optimum"))
 
-    # Ticks: fixed in generations; labels in evaluations via secondary axis
-    gen_ticks = np.unique(np.round(np.linspace(0, n_generations, gen_ticks_n)).astype(int))
+    # Compute x_start per column (ct_level): first generation where all modes/psizes
+    # in that column have count_col >= n_runs. Columns share x via sharex="col".
+    count_col = metric_spec.get("count_col", "")
+    x_start_by_col: dict[str, int] = dict.fromkeys(ct_levels, 0)
+    if count_col:
+        for ct in ct_levels:
+            col_start = 0
+            for psize in psizes:
+                for mode in modes:
+                    path = index.get((psize, ct, mode))
+                    if path is None:
+                        continue
+                    sdf = pl.read_parquet(path).select(["generation", count_col]).sort("generation")
+                    full = sdf.filter(pl.col(count_col) >= n_runs)
+                    if full.height > 0:
+                        col_start = max(col_start, int(full["generation"][0]))
+            x_start_by_col[ct] = col_start
 
     nrows, ncols = len(psizes), len(ct_levels)
     fig, axes = plt.subplots(
         nrows,
         ncols,
         figsize=(fig_width, row_height * nrows),
-        sharex=True,
+        sharex="col",
         sharey="row",
         constrained_layout=True,
     )
@@ -209,7 +247,9 @@ def snakemake_main() -> None:
             if opt is not None:
                 ax.axhline(opt, color=opt_color, linestyle=opt_ls, linewidth=opt_lw, zorder=1, label=opt_label)
 
-            ax.set_xlim(0, n_generations)
+            x_start = x_start_by_col[ct]
+            gen_ticks = np.unique(np.round(np.linspace(x_start, n_generations, gen_ticks_n)).astype(int))
+            ax.set_xlim(x_start, n_generations)
             ax.xaxis.set_major_locator(FixedLocator(gen_ticks))
             ax.tick_params(axis="x", which="both", labelbottom=False)
 

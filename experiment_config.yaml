@@ -23,6 +23,10 @@ population_sizes: [6, 12, 18]
 n_generations: 200
 n_runs: 250
 
+# Random samples for inactive constraint thresholds
+
+n_random_samples: 10000
+
 # Epsilon for approximating shadow front nadir point
 
 hv_eps_percent: 0.01

@@ -12,9 +12,13 @@ Rule:
 
 from typing import Any
 
+import numpy as np
 import polars as pl
 import yaml
 from snakemake.script import snakemake
+from utils import PROBLEM_BUILDERS
+
+from desdeo.problem import SimulatorEvaluator
 
 LEVELS = ["low", "med", "high"]
 
@@ -106,6 +110,47 @@ def snakemake_main() -> None:
                 continue
 
             levels_out[lvl][c] = t
+
+    # Handle inactive constraints (no evidence from shadow front) via random sampling
+    inactive = [c for c in constraint_symbols if evidence[c]["max_violation"] is None]
+    if inactive:
+        n_random_samples = int(snakemake.config.get("n_random_samples", 10_000))
+
+        problem_obj = PROBLEM_BUILDERS[problem_name]()
+        evaluator = SimulatorEvaluator(problem=problem_obj)
+
+        flattened_vars = problem_obj.get_flattened_variables()
+        lowers = np.array([v.lowerbound for v in flattened_vars], dtype=float)
+        uppers = np.array([v.upperbound for v in flattened_vars], dtype=float)
+
+        rng = np.random.default_rng(seed=42)
+        samples = rng.uniform(lowers, uppers, size=(n_random_samples, len(flattened_vars)))
+
+        xs = {var.symbol: samples[:, i].tolist() for i, var in enumerate(flattened_vars)}
+        results = evaluator.evaluate(xs)
+
+        for c in inactive:
+            vals = results[c].to_numpy()
+            positive = vals[vals > 0.0]
+            if positive.size == 0:
+                evidence[c]["source"] = "random_sampling"
+                continue
+
+            max_v = float(positive.max())
+            evidence[c] = {"n": int(positive.size), "max_violation": max_v, "source": "random_sampling"}
+
+            for lvl, p in zip(LEVELS, percents, strict=True):
+                t = float(p) * max_v
+                if t <= 0.0:
+                    continue
+                levels_out[lvl][c] = t
+
+        print(f"[{problem_name}] random sampling for inactive constraints {inactive}: n_samples={n_random_samples}")
+
+    # Tag evidence with source for traceability
+    for c in constraint_symbols:
+        if "source" not in evidence[c]:
+            evidence[c]["source"] = "shadow_front"
 
     # Objective shadow optimum from the reference front
     def threshold_feasible_expr(level: str) -> pl.Expr:

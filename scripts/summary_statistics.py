@@ -7,6 +7,8 @@ import yaml
 from scipy.stats import t
 from snakemake.script import snakemake
 
+from desdeo.tools.non_dominated_sorting import non_dominated
+
 
 def snakemake_main() -> None:  # noqa: D103
     data_path = str(snakemake.input["data"])
@@ -161,59 +163,91 @@ def snakemake_main() -> None:  # noqa: D103
         for c in c_cols:
             if relaxed is None:
                 terms.append(pl.col(c) <= 0.0)
+            elif c == relaxed:
+                terms.append(pl.col(c) <= float(thresholds.get(c, 0.0)))
             else:
-                if c == relaxed:
-                    terms.append(pl.col(c) <= float(thresholds.get(c, 0.0)))
-                else:
-                    terms.append(pl.col(c) <= 0.0)
+                terms.append(pl.col(c) <= 0.0)
         return pl.all_horizontal(terms)
 
-    # shadow front nadir approximation
-    # best fully feasible objective components
-    cand_all = df_front.filter(filter_relax_only(relaxed=None))
-    if cand_all.height == 0:
-        raise ValueError("No points on df_front with all constraints enforced (c <= 0).")
-
-    best_all = cand_all.sort(f_col).head(1)
-
-    # relax each constraint one by one
-    selected_rows = [best_all]
-    best_relax = {}
-
+    # Shadow front nadir: collect all shadow-feasible points from the reference
+    # front (fully feasible + each single-constraint relaxation) and take the
+    # per-dimension maximum (worst) as the reference point for HV.
+    shadow_feasible_parts = [df_front.filter(filter_relax_only(relaxed=None))]
     for ci in c_cols:
-        cand = df_front.filter(filter_relax_only(relaxed=ci))
-        if cand.height == 0:
-            raise ValueError(
-                f"No points when relaxing {ci} to <= {thresholds.get(ci, 0.0)} while enforcing others as <= 0."
-            )
-        row = cand.sort(f_col).head(1)
-        best_relax[ci] = row
-        selected_rows.append(row)
+        shadow_feasible_parts.append(df_front.filter(filter_relax_only(relaxed=ci)))
 
-    sel = pl.concat(selected_rows).unique()
+    shadow_feasible = pl.concat(shadow_feasible_parts).unique()
+    if shadow_feasible.height == 0:
+        raise ValueError("No shadow-feasible points on the reference front.")
 
-    ref_f = float(best_all[f_col][0])
-    ref_cs = [float(best_relax[ci][ci][0]) for ci in c_cols]
-    ref = np.array([ref_f, *ref_cs], dtype=float)
+    # Ideal (min) and nadir (max) per dimension on the shadow-feasible front
+    ideal_vals = np.array(shadow_feasible.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0), dtype=float)
+    nadir_vals = np.array(shadow_feasible.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0), dtype=float)
+    sf_ranges = nadir_vals - ideal_vals
 
-    # epsilon padding
-    max_vals = sel.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0)
-    min_vals = sel.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0)
-    ranges = np.maximum(np.array(max_vals, float) - np.array(min_vals, float), 0.0)
-    ref = ref + eps_percent * ranges
+    # Detect inactive dimensions: near-zero range in the shadow-feasible region
+    active_mask = sf_ranges > 1e-12
+    # Always keep the objective (first column)
+    active_mask[0] = True
 
-    hv_ind = moocore.Hypervolume(ref=ref, maximise=False)
+    # Normalize to [0, 1] using ideal/nadir so all dimensions contribute equally.
+    # ref is set to 1 + eps in the normalized space.
+    ideal_active = ideal_vals[active_mask]
+    range_active = sf_ranges[active_mask]
+    # Guard against zero range (shouldn't happen after active_mask, but be safe)
+    range_active = np.where(range_active > 0, range_active, 1.0)
 
-    # Hypervolume per (run, generation)
-    rows = []
-    for (run, gen), sub in df.group_by(["run", "generation"], maintain_order=True):
-        pts = sub.select(dim_cols).to_numpy()
-        pts = pts[(pts <= ref).all(axis=1)]  # ref-box filter
+    ref_norm = np.ones(int(active_mask.sum())) * (1.0 + eps_percent)
+    hv_ind = moocore.Hypervolume(ref=ref_norm, maximise=False)
 
-        hv_val = 0.0 if pts.shape[0] == 0 else float(hv_ind(pts))
-        rows.append((int(run), int(gen), hv_val))
+    def normalize(pts: np.ndarray) -> np.ndarray:
+        return (pts - ideal_active) / range_active
 
-    hv_df = pl.DataFrame(rows, schema=["run", "generation", "hv"]).sort(["run", "generation"])
+    # Cumulative best HV with non-dominated archive per run
+    # Pre-partition data into {(run, gen): numpy_array} for fast lookup
+    generations = sorted(df["generation"].unique().to_list())
+    runs = sorted(df["run"].unique().to_list())
+
+    grouped = df.group_by(["run", "generation"], maintain_order=True)
+    gen_data: dict[tuple[int, int], np.ndarray] = {}
+    for (run_id, gen), sub in grouped:
+        pts = normalize(sub.select(dim_cols).to_numpy()[:, active_mask])
+        gen_data[(int(run_id), int(gen))] = pts
+
+    n_active = int(active_mask.sum())
+    hv_rows = []
+    for run_id in runs:
+        archive = np.empty((0, n_active), dtype=float)
+
+        for gen in generations:
+            new_pts = gen_data.get((int(run_id), int(gen)))
+
+            if new_pts is None or new_pts.shape[0] == 0:
+                hv_val = 0.0 if archive.shape[0] == 0 else float(hv_ind(archive))
+                hv_rows.append((int(run_id), int(gen), hv_val))
+                continue
+
+            if archive.shape[0] == 0:
+                combined = new_pts
+            else:
+                combined = np.vstack([archive, new_pts])
+
+            # ref-box filter (in normalized space)
+            combined = combined[(combined <= ref_norm).all(axis=1)]
+
+            if combined.shape[0] == 0:
+                archive = np.empty((0, n_active), dtype=float)
+                hv_rows.append((int(run_id), int(gen), 0.0))
+                continue
+
+            # Filter to non-dominated
+            nd_mask = non_dominated(combined)
+            archive = combined[nd_mask]
+
+            hv_val = float(hv_ind(archive))
+            hv_rows.append((int(run_id), int(gen), hv_val))
+
+    hv_df = pl.DataFrame(hv_rows, schema=["run", "generation", "hv"]).sort(["run", "generation"])
 
     hv_summary = (
         hv_df.group_by("generation")
@@ -237,11 +271,55 @@ def snakemake_main() -> None:  # noqa: D103
         (pl.col("hv_mean") - pl.col("hv_t_crit") * pl.col("hv_stderr")).alias("hv_ci_lower"),
     )
 
+    # Shadow price difference: run_best_so_far - shadow_best_so_far (per run, per generation)
+    shadow_diff_per_run = (
+        per_run_best_so_far.select(["run", "generation", "run_best_so_far"])
+        .join(
+            per_run_shadow_best_so_far.select(["run", "generation", "shadow_best_so_far"]),
+            on=["run", "generation"],
+        )
+        .with_columns((pl.col("run_best_so_far") - pl.col("shadow_best_so_far")).alias("shadow_price_diff"))
+    )
+
+    shadow_diff_summary = (
+        shadow_diff_per_run.group_by("generation")
+        .agg(
+            pl.col("shadow_price_diff").mean().alias("shadow_price_diff_mean"),
+            pl.col("shadow_price_diff").std().alias("shadow_price_diff_std"),
+            pl.col("shadow_price_diff").count().alias("shadow_price_diff_n_runs"),
+        )
+        .with_columns(
+            (pl.col("shadow_price_diff_std") / pl.col("shadow_price_diff_n_runs").sqrt()).alias(
+                "shadow_price_diff_stderr"
+            )
+        )
+        .sort("generation")
+    )
+
+    shadow_diff_summary = shadow_diff_summary.with_columns(
+        pl.when(pl.col("shadow_price_diff_n_runs") > 1)
+        .then(
+            pl.Series(
+                "shadow_price_diff_t_crit",
+                t.ppf(0.975, shadow_diff_summary["shadow_price_diff_n_runs"] - 1),
+            )
+        )
+        .otherwise(None)
+    ).with_columns(
+        (
+            pl.col("shadow_price_diff_mean") + pl.col("shadow_price_diff_t_crit") * pl.col("shadow_price_diff_stderr")
+        ).alias("shadow_price_diff_ci_upper"),
+        (
+            pl.col("shadow_price_diff_mean") - pl.col("shadow_price_diff_t_crit") * pl.col("shadow_price_diff_stderr")
+        ).alias("shadow_price_diff_ci_lower"),
+    )
+
     # Collate and save
     summary_all = (
         summary.join(shadow_gen_summary, on="generation")
         .join(shadow_best_summary, on="generation")
         .join(hv_summary, on="generation")
+        .join(shadow_diff_summary, on="generation")
     )
     summary_all.write_parquet(out_path)
 
