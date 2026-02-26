@@ -170,8 +170,9 @@ def snakemake_main() -> None:
     opt_label = str(opt_style.get("label", "Optimum"))
 
     # Compute x_start per column (ct_level): first generation where all modes/psizes
-    # in that column have count_col >= n_runs. Columns share x via sharex="col".
+    # in that column have count_col >= 10% of n_runs. Columns share x via sharex="col".
     count_col = metric_spec.get("count_col", "")
+    min_count = max(2, int(n_runs * 0.1))
     x_start_by_col: dict[str, int] = dict.fromkeys(ct_levels, 0)
     if count_col:
         for ct in ct_levels:
@@ -182,7 +183,7 @@ def snakemake_main() -> None:
                     if path is None:
                         continue
                     sdf = pl.read_parquet(path).select(["generation", count_col]).sort("generation")
-                    full = sdf.filter(pl.col(count_col) >= n_runs)
+                    full = sdf.filter(pl.col(count_col) >= min_count)
                     if full.height > 0:
                         col_start = max(col_start, int(full["generation"][0]))
             x_start_by_col[ct] = col_start

@@ -183,6 +183,11 @@ rule summary_statistics:
             RESULTS_DIR,
             "summary",
             "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_summary." + EXT,
+        ),
+        os.path.join(
+            RESULTS_DIR,
+            "summary",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_summary_meta.yaml",
         )
     log:
         os.path.join(

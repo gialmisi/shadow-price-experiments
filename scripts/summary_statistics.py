@@ -7,16 +7,25 @@ import yaml
 from scipy.stats import t
 from snakemake.script import snakemake
 
-from desdeo.tools.non_dominated_sorting import non_dominated
+from desdeo.tools.non_dominated_sorting import non_dominated_merge
 
 
 def snakemake_main() -> None:  # noqa: D103
     data_path = str(snakemake.input["data"])
     front_path = str(snakemake.input["front"])
     out_path = str(snakemake.output[0])
+    out_meta_path = str(snakemake.output[1])
 
     objective_symbol = str(snakemake.params.objective_symbol)
     ct_level = str(snakemake.params.ct_level)
+
+    # Build a label for progress messages
+    job_label = (
+        f"{snakemake.wildcards.problem_name}"
+        f"/{snakemake.wildcards.mode}"
+        f"/ct{snakemake.wildcards.ctlevel}"
+        f"/psize{snakemake.wildcards.psize}"
+    )
 
     thresholds_path = str(snakemake.input["thresholds"])
     with open(thresholds_path, encoding="utf-8") as f:  # noqa: PTH123
@@ -34,6 +43,8 @@ def snakemake_main() -> None:  # noqa: D103
 
     df = pl.read_parquet(data_path)
     df_front = pl.read_parquet(front_path)
+
+    print(f"[{job_label}] Loaded {df.height} rows, {df_front.height} front points", flush=True)
 
     # Best feasible objective
     feasible_expr = pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols])
@@ -79,6 +90,8 @@ def snakemake_main() -> None:  # noqa: D103
             "best_ci_lower"
         ),
     ).sort("generation")
+
+    print(f"[{job_label}] Best-feasible summary done", flush=True)
 
     # Shadow price: best objective in each generation using THRESHOLD-feasibility
     # A point is "shadow-feasible" if all constraints satisfy c <= threshold[c]
@@ -157,6 +170,8 @@ def snakemake_main() -> None:  # noqa: D103
         ),
     )
 
+    print(f"[{job_label}] Shadow-price summaries done", flush=True)
+
     # Hypervolume reference point from reference front
     def filter_relax_only(relaxed: str | None) -> pl.Expr:
         terms = []
@@ -185,10 +200,33 @@ def snakemake_main() -> None:  # noqa: D103
     nadir_vals = np.array(shadow_feasible.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0), dtype=float)
     sf_ranges = nadir_vals - ideal_vals
 
-    # Detect inactive dimensions: near-zero range in the shadow-feasible region
+    # Evidence-based dimension filtering: drop constraints with weak evidence
+    evidence = thresholds_doc.get("evidence", {})
     active_mask = sf_ranges > 1e-12
-    # Always keep the objective (first column)
-    active_mask[0] = True
+    active_mask[0] = True  # Always keep the objective
+
+    dropped_meta = {}
+    for i, c in enumerate(c_cols):
+        col_idx = i + 1  # offset by 1 because objective is first
+        ev = evidence.get(c, {})
+        n_ev = ev.get("n", 0)
+        source = ev.get("source", "")
+        if source == "random_sampling":
+            active_mask[col_idx] = False
+            dropped_meta[c] = {"reason": "random_sampling", "n": n_ev}
+        elif n_ev < 10:
+            active_mask[col_idx] = False
+            dropped_meta[c] = {"reason": "insufficient_evidence", "n": n_ev, "threshold": 10}
+
+    # Build sidecar metadata
+    active_dim_names = [dim_cols[i] for i in range(len(dim_cols)) if active_mask[i]]
+    hv_meta = {
+        "hv_dimensions": {
+            "all": dim_cols,
+            "active": active_dim_names,
+            "dropped": dropped_meta if dropped_meta else None,
+        }
+    }
 
     # Normalize to [0, 1] using ideal/nadir so all dimensions contribute equally.
     # ref is set to 1 + eps in the normalized space.
@@ -203,7 +241,7 @@ def snakemake_main() -> None:  # noqa: D103
     def normalize(pts: np.ndarray) -> np.ndarray:
         return (pts - ideal_active) / range_active
 
-    # Cumulative best HV with non-dominated archive per run
+    # Cumulative best HV with incremental non-dominated merge per run
     # Pre-partition data into {(run, gen): numpy_array} for fast lookup
     generations = sorted(df["generation"].unique().to_list())
     runs = sorted(df["run"].unique().to_list())
@@ -215,39 +253,53 @@ def snakemake_main() -> None:  # noqa: D103
         gen_data[(int(run_id), int(gen))] = pts
 
     n_active = int(active_mask.sum())
+    print(
+        f"[{job_label}] HV loop: {len(runs)} runs \u00d7 {len(generations)} generations, {n_active} active dims",
+        flush=True,
+    )
+
     hv_rows = []
-    for run_id in runs:
+    for run_idx, run_id in enumerate(runs):
         archive = np.empty((0, n_active), dtype=float)
+        prev_hv = 0.0
 
         for gen in generations:
             new_pts = gen_data.get((int(run_id), int(gen)))
 
             if new_pts is None or new_pts.shape[0] == 0:
-                hv_val = 0.0 if archive.shape[0] == 0 else float(hv_ind(archive))
-                hv_rows.append((int(run_id), int(gen), hv_val))
+                hv_rows.append((int(run_id), int(gen), prev_hv))
                 continue
+
+            # Ref-box filter new points only (archive already passed)
+            new_pts = new_pts[(new_pts <= ref_norm).all(axis=1)]
+            if new_pts.shape[0] == 0:
+                hv_rows.append((int(run_id), int(gen), prev_hv))
+                continue
+
+            # Filter new points to non-dominated among themselves
+            nd_new_mask = moocore.is_nondominated(new_pts, maximise=False)
+            new_nd = new_pts[nd_new_mask]
 
             if archive.shape[0] == 0:
-                combined = new_pts
+                archive = new_nd
             else:
-                combined = np.vstack([archive, new_pts])
+                # Incremental merge: only compare archive × new, not archive × archive
+                mask_old, mask_new = non_dominated_merge(archive, new_nd)
+                if not mask_new.any():
+                    # No new points survived → archive unchanged, reuse previous HV
+                    hv_rows.append((int(run_id), int(gen), prev_hv))
+                    continue
+                archive = np.vstack([archive[mask_old], new_nd[mask_new]])
 
-            # ref-box filter (in normalized space)
-            combined = combined[(combined <= ref_norm).all(axis=1)]
+            prev_hv = float(hv_ind(archive))
+            hv_rows.append((int(run_id), int(gen), prev_hv))
 
-            if combined.shape[0] == 0:
-                archive = np.empty((0, n_active), dtype=float)
-                hv_rows.append((int(run_id), int(gen), 0.0))
-                continue
+        if (run_idx + 1) % 50 == 0:
+            print(f"[{job_label}] HV: {run_idx + 1}/{len(runs)} runs done", flush=True)
 
-            # Filter to non-dominated
-            nd_mask = non_dominated(combined)
-            archive = combined[nd_mask]
+    print(f"[{job_label}] HV loop done", flush=True)
 
-            hv_val = float(hv_ind(archive))
-            hv_rows.append((int(run_id), int(gen), hv_val))
-
-    hv_df = pl.DataFrame(hv_rows, schema=["run", "generation", "hv"]).sort(["run", "generation"])
+    hv_df = pl.DataFrame(hv_rows, schema=["run", "generation", "hv"], orient="row").sort(["run", "generation"])
 
     hv_summary = (
         hv_df.group_by("generation")
@@ -322,6 +374,12 @@ def snakemake_main() -> None:  # noqa: D103
         .join(shadow_diff_summary, on="generation")
     )
     summary_all.write_parquet(out_path)
+
+    # Write sidecar metadata
+    with open(out_meta_path, "w", encoding="utf-8") as f:  # noqa: PTH123
+        yaml.dump(hv_meta, f, default_flow_style=False, sort_keys=False)
+
+    print(f"[{job_label}] Written {out_path}", flush=True)
 
 
 if __name__ == "__main__":
