@@ -11,6 +11,7 @@ THRESHOLDS_SCRIPT = config["thresholds_script"]
 THRESH_PCTS = config["threshold_improvement_percentages"]
 EXT = config["result_extension"]
 PLOT_SCRIPT = config["plot_script"]
+MODE_TABLE_SCRIPT = config["mode_table_script"]
 
 METRIC_KEYS = ["best_so_far", "hv", "shadow_gen_best", "shadow_best_so_far", "shadow_price_diff"]
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
@@ -61,6 +62,22 @@ def summary_inputs_and_meta(problem_name: str, metric_key: str):
     return paths, meta
 
 
+def all_summary_inputs_and_meta():
+    """All summary paths and metadata across all problems (for mode comparison tables)."""
+    paths, meta = [], []
+    for pname in SUMMARY_PROBLEMS:
+        for psize in config["population_sizes"]:
+            for ct in CT_LEVELS:
+                for mode in config["modes"]:
+                    p = os.path.join(
+                        RESULTS_DIR, "summary",
+                        f"{pname}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_summary.{EXT}",
+                    )
+                    paths.append(p)
+                    meta.append({"path": p, "problem": pname, "psize": psize, "ctlevel": ct, "mode": mode})
+    return paths, meta
+
+
 rule all:
     input:
         # experiment data
@@ -106,6 +123,11 @@ rule all:
             for p in config["problems"]
             for m in METRIC_KEYS
             if p["name"] in SUMMARY_PROBLEMS
+        ] +
+        # mode comparison tables
+        [
+            os.path.join(RESULTS_DIR, "tables", f"mode_comparison_{m}.tex")
+            for m in METRIC_KEYS
         ]
 
 
@@ -232,3 +254,22 @@ rule plot_summary_figures:
         summaries_meta=lambda wc: summary_inputs_and_meta(wc.problem_name, wc.metric_key)[1],
     script:
         PLOT_SCRIPT
+
+
+rule mode_comparison_table:
+    input:
+        summaries=lambda wc: all_summary_inputs_and_meta()[0],
+    output:
+        parquet=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.parquet"),
+        latex=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.tex"),
+    params:
+        summaries_meta=lambda wc: all_summary_inputs_and_meta()[1],
+        modes=lambda wc: config["modes"],
+        population_sizes=lambda wc: config["population_sizes"],
+        ct_levels=lambda wc: CT_LEVELS,
+        problems=lambda wc: SUMMARY_PROBLEMS,
+        n_generations=lambda wc: config["n_generations"],
+        metric_key=lambda wc: wc.metric_key,
+        thresholds_dir=os.path.join(RESULTS_DIR, "thresholds"),
+    script:
+        MODE_TABLE_SCRIPT

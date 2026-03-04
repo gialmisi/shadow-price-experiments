@@ -6,6 +6,7 @@ front_gen_script: "scripts/generate_front.py"
 summary_stats_script: "scripts/summary_statistics.py"
 thresholds_script: "scripts/compute_thresholds.py"
 plot_script: "scripts/plot_summary_figures.py"
+mode_table_script: "scripts/mode_comparison_table.py"
 result_extension: "parquet"
 base_seed: 28012026
 
