@@ -2,7 +2,7 @@
 
 For each (problem, population_size, threshold_level) cell the table shows
 the final-generation metric mean for each mode (Baseline / Relaxed / Ranking),
-with \\textbf{bold} for best and \\underline{underline} for worst.
+with \\textbf{bold} for best and \\textit{italic} for worst.
 """
 
 from math import floor, log10
@@ -28,8 +28,8 @@ _METRIC_COL = {
 _PROBLEM_LABEL = {
     "branin": "Branin",
     "mystery": "Mystery",
-    "cantilevered_beam": "Cantilevered beam",
-    "pressure_vessel": "Pressure vessel",
+    "cantilevered_beam": "C.\\ beam",
+    "pressure_vessel": "P.\\ vessel",
     "townsend": "Townsend",
     "g2": "G02",
     "g6": "G06",
@@ -39,7 +39,7 @@ _PROBLEM_LABEL = {
 }
 
 
-def _sigfig(val: float, n: int = 4, max_decimals: int | None = None) -> str:
+def _sigfig(val: float, n: int = 3, max_decimals: int | None = None) -> str:
     """Format *val* to *n* significant figures, optionally capping decimals."""
     if val == 0:
         return "0"
@@ -50,27 +50,26 @@ def _sigfig(val: float, n: int = 4, max_decimals: int | None = None) -> str:
     return f"{val:.{prec}f}"
 
 
-def _shared_exponent(values: list[float | None], threshold: int = 2) -> int:
+def _shared_exponent(values: list[float | None]) -> int:
     """Compute a shared base-10 exponent for a group of values.
 
-    Returns 0 if scientific notation is not needed (|exponent| < *threshold*).
+    Returns 0 when no scaling is needed.
     """
     abs_vals = [abs(v) for v in values if v is not None and v != 0]
     if not abs_vals:
         return 0
     max_abs = max(abs_vals)
-    exp = floor(log10(max_abs))
-    return exp if abs(exp) >= threshold else 0
+    return floor(log10(max_abs))
 
 
 def _fmt_triple(
     values: list[float | None],
     higher_is_better: bool,
     closer_to_zero: bool = False,
-    sig: int = 4,
+    sig: int = 3,
     max_decimals: int | None = None,
 ) -> list[str]:
-    """Return a list of formatted strings (one per mode), bold best, underline worst."""
+    """Return a list of formatted strings (one per mode), bold best, italic worst."""
     valid = [v for v in values if v is not None]
     if not valid:
         return ["--"] * len(values)
@@ -98,11 +97,11 @@ def _fmt_triple(
                 if abs(abs(v) - best_abs) <= 1e-10 * ref:
                     s = f"\\textbf{{{s}}}"
                 elif abs(abs(v) - worst_abs) <= 1e-10 * ref:
-                    s = f"\\underline{{{s}}}"
+                    s = f"\\textit{{{s}}}"
             elif abs(v - best) <= 1e-10 * ref:
                 s = f"\\textbf{{{s}}}"
             elif abs(v - worst) <= 1e-10 * ref:
-                s = f"\\underline{{{s}}}"
+                s = f"\\textit{{{s}}}"
         parts.append(s)
     return parts
 
@@ -198,37 +197,37 @@ def snakemake_main() -> None:  # noqa: D103
         + caption_metric
         + " by mode ("
         + abbrev_legend
-        + ").  \\textbf{Bold} = best, \\underline{underline} = worst."
+        + ").  \\textbf{Bold} = best, \\textit{italic} = worst."
         + (" " + caption_note if caption_note else "")
         + "}"
     )
-    lines.append("\\scriptsize")
-    lines.append("\\setlength{\\tabcolsep}{2pt}")
-    # columns: n_pop | (n_modes per ct_level) * n_ct
-    # Tight within each threshold group, breathing space between groups
-    total_cols = 1 + n_ct * n_modes
-    group = " c" * n_modes
-    col_spec = "r" + " @{\\hskip 8pt}".join([group] * n_ct)
+    lines.append("\\small")
+    lines.append("\\setlength{\\tabcolsep}{4pt}")
+    # columns: problem_name | n_pop | (n_modes per ct_level) * n_ct
+    total_data_cols = 1 + n_ct * n_modes  # npop + mode columns
+    total_cols = 1 + total_data_cols  # problem col + data cols
+    _MODE_SHADES = ["gray!0", "gray!10", "gray!20"]
+    mode_col_spec = " ".join(
+        ">{" + "\\columncolor{" + _MODE_SHADES[i % len(_MODE_SHADES)] + "}}c" for i in range(n_modes)
+    )
+    col_spec = "p{0.7cm} @{}r@{\\hspace{4pt}} " + " ".join([mode_col_spec] * n_ct)
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
-
-    # Helper: a full-width row with "--- label ---" using \hrulefill
-    def _ruled_label(label: str, cols: int = total_cols) -> str:
-        return f"\\multicolumn{{{cols}}}{{c}}{{\\hrulefill\\quad {label} \\quad\\hrulefill}} \\\\"
 
     # Header: threshold level labels and mode abbreviations
     lines.append("\\toprule")
 
     # --- low --- | --- medium --- | --- high --- (each spanning its mode group)
-    parts = [""]
+    parts = ["", ""]  # empty for problem col and npop col
     for ct in ct_levels:
         ct_label = _CT_LABEL.get(ct, ct)
         parts.append(f"\\multicolumn{{{n_modes}}}{{c}}{{\\hrulefill\\;{ct_label}\\;\\hrulefill}}")
     lines.append(" & ".join(parts) + " \\\\")
 
-    # Sub-header: mode abbreviations
-    parts = ["$n_\\mathrm{pop}$"]
+    # Sub-header: rotated mode abbreviations
+    rotated = [f"\\rotatebox{{90}}{{\\small {a}}}" for a in mode_abbrevs]
+    parts = ["", "$n$"]
     for _ in ct_levels:
-        parts.extend(mode_abbrevs)
+        parts.extend(rotated)
     lines.append(" & ".join(parts) + " \\\\")
     lines.append("\\midrule")
 
@@ -241,24 +240,33 @@ def snakemake_main() -> None:  # noqa: D103
                 all_vals.extend(idx.get((prob, ps, ct), {}).values())
         problem_exponent[prob] = _shared_exponent(all_vals)
 
-    # Data rows: --- Problem Name --- then sub-rows per psize
-    for prob in problems:
+    # Data rows: rotated problem name in leftmost col, then sub-rows per psize
+    for prob_idx, prob in enumerate(problems):
         label = _PROBLEM_LABEL.get(prob, prob)
         exp = problem_exponent[prob]
-        if exp != 0:
-            label += f" ($\\times 10^{{{exp}}}$)"
-        lines.append("\\addlinespace[4pt]")
-        lines.append(_ruled_label(label))
+        # Separator between problem blocks
+        if prob_idx > 0:
+            lines.append(f"\\cmidrule{{2-{total_data_cols + 1}}}")
         scale = 10.0 ** (-exp) if exp != 0 else 1.0
-        mdp = 4 if exp != 0 else None  # cap mantissa decimals
-        for ps in population_sizes:
-            parts: list[str] = [str(ps)]
+        mdp = 3 if exp != 0 else None  # cap mantissa decimals
+        for row_in_block, ps in enumerate(population_sizes):
+            # Problem name cell: multirow on first row, empty otherwise
+            if row_in_block == 0:
+                if exp != 0:
+                    rot_content = f"\\shortstack[c]{{\\small {label} \\\\ \\scriptsize $(\\times 10^{{{exp}}})$}}"
+                else:
+                    rot_content = f"\\small {label}"
+                prob_cell = f"\\multirow{{{n_psizes}}}{{*}}{{\\rotatebox{{90}}{{{rot_content}}}}}"
+            else:
+                prob_cell = ""
+            data_cells: list[str] = [str(ps)]
             for ct in ct_levels:
                 mode_vals = idx.get((prob, ps, ct), {})
                 vals = [mode_vals.get(m) for m in modes]
                 if exp != 0:
                     vals = [v * scale if v is not None else None for v in vals]
-                parts.extend(_fmt_triple(vals, higher_is_better, closer_to_zero, max_decimals=mdp))
+                data_cells.extend(_fmt_triple(vals, higher_is_better, closer_to_zero, max_decimals=mdp))
+            parts: list[str] = [prob_cell] + data_cells
             lines.append(" & ".join(parts) + " \\\\")
 
     lines.append("\\bottomrule")
