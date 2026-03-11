@@ -196,6 +196,22 @@ plotting:
     linewidth: 1.6
     label: "Optimum"
 
+  # Per (problem, metric) y-scale overrides: "log", "symlog", etc.
+  yscale_overrides:
+    g9:best_so_far: "log"
+    g9:shadow_price_diff: "log"
+
+  # Per (problem, metric) inset zoom: show a small zoomed-in subplot
+  inset_overrides:
+    g9:best_so_far:
+      ylim: [650, 1000]
+      xlim_evals_start: 500
+      position: [0.45, 0.45, 0.50, 0.50]
+    g9:shadow_price_diff:
+      ylim: [150, 400]
+      xlim_evals_start: 500
+      position: [0.45, 0.45, 0.50, 0.50]
+
   legend:
     y: 1.03
     frameon: true

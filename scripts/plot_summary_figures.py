@@ -126,6 +126,14 @@ def snakemake_main() -> None:
     plot_cfg: dict[str, Any] = dict(snakemake.params.get("plotting", {}))
     metric_spec = METRICS[metric_key]
 
+    # Per-(problem, metric) y-scale override (e.g. "log" for g9:best_so_far)
+    yscale_overrides = dict(plot_cfg.get("yscale_overrides", {}))
+    yscale = str(yscale_overrides.get(f"{problem}:{metric_key}", "linear"))
+
+    # Per-(problem, metric) inset zoom config
+    inset_overrides = dict(plot_cfg.get("inset_overrides", {}))
+    inset_cfg = inset_overrides.get(f"{problem}:{metric_key}")
+
     # Load thresholds doc once (for optimum lines)
     thr_doc = _load_thresholds_doc(thresholds_yaml)
 
@@ -209,6 +217,9 @@ def snakemake_main() -> None:
             if i == 0:
                 ax.set_title(f"$th = \\mathrm{{{ct}}}$")
 
+            if yscale != "linear":
+                ax.set_yscale(yscale)
+
             ax.grid(
                 True,
                 which="major",
@@ -216,12 +227,17 @@ def snakemake_main() -> None:
                 linewidth=float(plot_cfg.get("grid_lw", 0.6)),
             )
 
+            x_start = x_start_by_col[ct]
+
+            # Compute optimum early so it can serve as CI clip floor for log scale
+            opt = _get_optimum(thr_doc, metric_spec, ct)
+
             for mode in modes:
                 path = index.get((psize, ct, mode))
                 if path is None:
                     missing.append((problem, psize, ct, mode))
                     continue
-                df = _read_series(path, metric_spec)
+                df = _read_series(path, metric_spec).filter(pl.col("generation") >= x_start)
 
                 ms = mode_style[mode]
                 ax.plot(
@@ -233,23 +249,68 @@ def snakemake_main() -> None:
                     linewidth=float(ms["linewidth"]),
                     zorder=3,
                 )
+                ci_lo = df[metric_spec["lower"]].to_numpy()
+                ci_hi = df[metric_spec["upper"]].to_numpy()
+                if yscale == "log" and opt is not None and opt > 0:
+                    ci_lo = np.clip(ci_lo, opt * 0.9, None)
                 ax.fill_between(
                     df["generation"].to_numpy(),
-                    df[metric_spec["lower"]].to_numpy(),
-                    df[metric_spec["upper"]].to_numpy(),
+                    ci_lo,
+                    ci_hi,
                     color=str(ms["color"]),
                     alpha=ci_alpha,
                     linewidth=0,
                     zorder=2,
                 )
 
-            # Metric-specific optimum line (best_so_far uses scalar; shadow uses ct-specific dict)
-            opt = _get_optimum(thr_doc, metric_spec, ct)
             if opt is not None:
                 ax.axhline(opt, color=opt_color, linestyle=opt_ls, linewidth=opt_lw, zorder=1, label=opt_label)
 
-            x_start = x_start_by_col[ct]
             gen_ticks = np.unique(np.round(np.linspace(x_start, n_generations, gen_ticks_n)).astype(int))
+            eval_ticks = gen_ticks * psize
+
+            # Inset zoom subplot (x-axis in evaluations, matching the outer plot)
+            if inset_cfg is not None:
+                ins_pos = list(map(float, inset_cfg["position"]))
+                ins_ylim = list(map(float, inset_cfg["ylim"]))
+                ins_eval_start = float(inset_cfg.get("xlim_evals_start", x_start * psize))
+                ins_eval_end = n_generations * psize
+
+                axins = ax.inset_axes(ins_pos)
+                for mode in modes:
+                    path = index.get((psize, ct, mode))
+                    if path is None:
+                        continue
+                    ins_df = _read_series(path, metric_spec).filter(pl.col("generation") >= x_start)
+                    ins_evals = ins_df["generation"].to_numpy() * psize
+                    ms = mode_style[mode]
+                    axins.plot(
+                        ins_evals,
+                        ins_df[metric_spec["mean"]].to_numpy(),
+                        color=str(ms["color"]),
+                        linestyle=str(ms["linestyle"]),
+                        linewidth=float(ms["linewidth"]) * 0.8,
+                    )
+                    ins_ci_lo = np.clip(ins_df[metric_spec["lower"]].to_numpy(), ins_ylim[0], ins_ylim[1])
+                    ins_ci_hi = np.clip(ins_df[metric_spec["upper"]].to_numpy(), ins_ylim[0], ins_ylim[1])
+                    axins.fill_between(
+                        ins_evals,
+                        ins_ci_lo,
+                        ins_ci_hi,
+                        color=str(ms["color"]),
+                        alpha=ci_alpha,
+                        linewidth=0,
+                    )
+                if opt is not None:
+                    axins.axhline(opt, color=opt_color, linestyle=opt_ls, linewidth=opt_lw * 0.8)
+                axins.set_xlim(ins_eval_start, ins_eval_end)
+                axins.set_ylim(ins_ylim)
+                # Use outer plot's eval ticks filtered to inset range
+                ins_ticks = eval_ticks[(eval_ticks >= ins_eval_start) & (eval_ticks <= ins_eval_end)]
+                axins.xaxis.set_major_locator(FixedLocator(ins_ticks))
+                axins.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x)}"))
+                axins.tick_params(labelsize=7)
+                axins.grid(True, alpha=0.2, linewidth=0.4)
             ax.set_xlim(x_start, n_generations)
             ax.xaxis.set_major_locator(FixedLocator(gen_ticks))
             ax.tick_params(axis="x", which="both", labelbottom=False)
@@ -258,7 +319,6 @@ def snakemake_main() -> None:
                 "bottom",
                 functions=(lambda g, p=psize: g * p, lambda e, p=psize: e / p),
             )
-            eval_ticks = gen_ticks * psize
             secax.xaxis.set_major_locator(FixedLocator(eval_ticks))
             secax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x)}"))
             secax.tick_params(axis="x", which="both", labelbottom=True)
