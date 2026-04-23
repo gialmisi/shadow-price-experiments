@@ -130,6 +130,14 @@ def snakemake_main():
     sigma = snakemake.config["seed_sigma"]
     flip_prob = snakemake.config["seed_flip_prob"]
 
+    print(  # noqa: T201
+        f"[{problem_name}] Starting front generation: "
+        f"pop_size={pop_size}, generations={n_generations}, "
+        f"η_c={xover_distribution}, η_m={distribution_index}, "
+        f"seed σ={sigma}, perturb_frac={perturb_fraction}",
+        flush=True,
+    )
+
     archive = generate_front(
         multi_problem,
         seed_solution=seed_solution,
@@ -143,7 +151,11 @@ def snakemake_main():
         flip_prob=flip_prob,
     )
 
+    n_archive = archive.solutions.height if archive.solutions is not None else 0
+    print(f"[{problem_name}] Front generation done, archive size: {n_archive}", flush=True)  # noqa: T201
+
     archive.solutions.write_parquet(out_path)
+    print(f"[{problem_name}] Written {out_path}", flush=True)  # noqa: T201
 
 
 if __name__ == "__main__":

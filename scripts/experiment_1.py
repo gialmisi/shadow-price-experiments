@@ -20,7 +20,7 @@ from desdeo.emo.hooks.archivers import Archive
 from desdeo.problem import Problem
 
 
-def run_nsga2_with_mode(  # noqa: PLR0913
+def run_nsga2_with_mode(
     problem: Problem,
     mode: str,
     constraints: dict[str, float],
@@ -33,13 +33,31 @@ def run_nsga2_with_mode(  # noqa: PLR0913
     nsga2_options = algorithms.nsga2_options()
     nsga2_options.template.seed = seed
 
+    # Experiment-specific operator settings (with optional per-problem overrides)
+    prob_overrides = snakemake.config.get("problem_operator_overrides", {}).get(snakemake.wildcards.problem_name, {})
+    xover_dist = prob_overrides.get(
+        "experiment_xover_distribution",
+        snakemake.config.get("experiment_xover_distribution", snakemake.config["xover_distribution"]),
+    )
+    mut_dist = prob_overrides.get(
+        "experiment_distribution_index",
+        snakemake.config.get("experiment_distribution_index", snakemake.config["distribution_index"]),
+    )
+    mut_factor = float(
+        prob_overrides.get(
+            "experiment_mutation_probability_factor",
+            snakemake.config.get("experiment_mutation_probability_factor", 1),
+        )
+    )
+    mut_prob = min(1.0, mut_factor / len(problem.variables))
+
     nsga2_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
         xover_probability=snakemake.config["xover_probability"],
-        xover_distribution=snakemake.config["xover_distribution"],
+        xover_distribution=xover_dist,
     )
     nsga2_options.template.mutation = mutation.BoundedPolynomialMutationOptions(
-        mutation_probability=1.0 / len(problem.variables),
-        distribution_index=snakemake.config["distribution_index"],
+        mutation_probability=mut_prob,
+        distribution_index=mut_dist,
     )
     nsga2_options.template.mate_selection = scalar_selection.TournamentSelectionOptions(
         name="TournamentSelection",
@@ -67,7 +85,7 @@ def run_nsga2_with_mode(  # noqa: PLR0913
     return archive
 
 
-def single_run(  # noqa: PLR0913
+def single_run(
     problem: Problem,
     mode: str,
     constraints: dict[str, float],
@@ -105,7 +123,7 @@ def snakemake_main():
     base_seed = int(snakemake.config["base_seed"])
 
     thresholds_path = str(snakemake.input["thresholds"])
-    with open(thresholds_path, "r", encoding="utf-8") as f:
+    with open(thresholds_path, encoding="utf-8") as f:
         thresholds_doc = yaml.safe_load(f)
 
     level_constraints = dict(thresholds_doc["levels"][ct_level])

@@ -17,12 +17,17 @@ xover_distribution: 20
 tournament_size: 2
 distribution_index: 20
 
+# Experiment-specific operator settings (overrides for experiment_1.py only)
+experiment_xover_distribution: 3
+experiment_distribution_index: 1
+experiment_mutation_probability_factor: 1  # multiplier for 1/n_vars
+
 # Data generation
 
 modes: ["baseline", "relaxed", "ranking"]
-population_sizes: [6, 12, 18]
+population_sizes: [12, 36, 60]
 n_generations: 200
-n_runs: 250
+n_runs: 500
 
 # Random samples for inactive constraint thresholds
 

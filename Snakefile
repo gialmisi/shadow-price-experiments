@@ -69,12 +69,23 @@ def all_summary_inputs_and_meta():
         for psize in config["population_sizes"]:
             for ct in CT_LEVELS:
                 for mode in config["modes"]:
-                    p = os.path.join(
+                    summary_path = os.path.join(
                         RESULTS_DIR, "summary",
                         f"{pname}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_summary.{EXT}",
                     )
-                    paths.append(p)
-                    meta.append({"path": p, "problem": pname, "psize": psize, "ctlevel": ct, "mode": mode})
+                    per_run_path = os.path.join(
+                        RESULTS_DIR, "summary",
+                        f"{pname}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_per_run.{EXT}",
+                    )
+                    paths.extend([summary_path, per_run_path])
+                    meta.append({
+                        "path": summary_path,
+                        "per_run_path": per_run_path,
+                        "problem": pname,
+                        "psize": psize,
+                        "ctlevel": ct,
+                        "mode": mode,
+                    })
     return paths, meta
 
 
@@ -128,7 +139,9 @@ rule all:
         [
             os.path.join(RESULTS_DIR, "tables", f"mode_comparison_{m}.tex")
             for m in METRIC_KEYS
-        ]
+        ] +
+        # appendix LaTeX
+        [os.path.join(RESULTS_DIR, "tables", "appendix_figures.tex")]
 
 
 rule generate_data:
@@ -210,6 +223,11 @@ rule summary_statistics:
             RESULTS_DIR,
             "summary",
             "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_summary_meta.yaml",
+        ),
+        os.path.join(
+            RESULTS_DIR,
+            "summary",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_per_run." + EXT,
         )
     log:
         os.path.join(
@@ -262,6 +280,8 @@ rule mode_comparison_table:
     output:
         parquet=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.parquet"),
         latex=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.tex"),
+        stats_parquet=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}_stats.parquet"),
+        stats_latex=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}_stats.tex"),
     params:
         summaries_meta=lambda wc: all_summary_inputs_and_meta()[1],
         modes=lambda wc: config["modes"],
@@ -273,3 +293,18 @@ rule mode_comparison_table:
         thresholds_dir=os.path.join(RESULTS_DIR, "thresholds"),
     script:
         MODE_TABLE_SCRIPT
+
+rule generate_appendix:
+    input:
+        figures=[
+            os.path.join(
+                RESULTS_DIR, "figures",
+                f"{p}__{m}_gen{config['n_generations']}_runs{config['n_runs']}_psizes{'-'.join(map(str, config['population_sizes']))}.pdf",
+            )
+            for p in SUMMARY_PROBLEMS
+            for m in ["best_so_far", "hv", "shadow_price_diff"]
+        ]
+    output:
+        os.path.join(RESULTS_DIR, "tables", "appendix_figures.tex")
+    run:
+        shell("uv run python scripts/generate_appendix_tex.py > {output}")

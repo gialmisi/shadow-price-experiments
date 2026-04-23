@@ -15,6 +15,7 @@ def snakemake_main() -> None:  # noqa: D103
     front_path = str(snakemake.input["front"])
     out_path = str(snakemake.output[0])
     out_meta_path = str(snakemake.output[1])
+    out_per_run_path = str(snakemake.output[2])
 
     objective_symbol = str(snakemake.params.objective_symbol)
     ct_level = str(snakemake.params.ct_level)
@@ -374,6 +375,29 @@ def snakemake_main() -> None:  # noqa: D103
         .join(shadow_diff_summary, on="generation")
     )
     summary_all.write_parquet(out_path)
+
+    # Per-run final-generation values (for statistical testing)
+    max_gen = max(generations)
+    per_run_final = (
+        per_run_best_so_far.filter(pl.col("generation") == max_gen)
+        .select(["run", "run_best_so_far"])
+        .join(
+            per_run_shadow_best_so_far.filter(pl.col("generation") == max_gen).select(
+                ["run", "shadow_gen_best", "shadow_best_so_far"]
+            ),
+            on="run",
+        )
+        .join(
+            hv_df.filter(pl.col("generation") == max_gen).select(["run", "hv"]),
+            on="run",
+        )
+        .join(
+            shadow_diff_per_run.filter(pl.col("generation") == max_gen).select(["run", "shadow_price_diff"]),
+            on="run",
+        )
+        .sort("run")
+    )
+    per_run_final.write_parquet(out_per_run_path)
 
     # Write sidecar metadata
     with open(out_meta_path, "w", encoding="utf-8") as f:  # noqa: PTH123
