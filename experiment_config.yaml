@@ -49,8 +49,22 @@ seed_perturb_fraction: 0.2
 seed_sigma: 0.02
 seed_flip_prob: 0.1
 
-# List of all considered problems
-threshold_improvement_percentages: [0.05, 0.10, 0.20] # low, med, high
+# Constraint thresholds (low/med/high) are now hand-picked per problem under
+# 'manual_thresholds' below. They used to be derived from positive constraint
+# violations on optimum-improving solutions in the NSGA-3-generated reference
+# front (rule: thresholds_from_positive_violations_on_optimum_improvers), but
+# for several problems that computation produced values far outside the actual
+# image of the constraints in the reachable design space, which made the
+# constraint-relaxation experiments meaningless. The picked values were chosen
+# from the interactive contour plots produced by scripts/plot_threshold_picker.py;
+# rationale notes live in results/figures/threshold_picker/hand_picked.md.
+# scripts/compute_thresholds.py now reads these values straight from the config
+# (it still uses the reference front, but only to compute objective_shadow_optima
+# at each ct level, which downstream plotting/stats need).
+#
+# threshold_improvement_percentages is kept for historical reference but is
+# no longer used.
+threshold_improvement_percentages: [0.05, 0.10, 0.20] # low, med, high (deprecated)
 
 # Remember to update 'PROBLEM_BUILDERS' in utils.py when adding new problems!
 
@@ -60,30 +74,52 @@ problems:
     objective_symbol: "f_1"
     objective_optimum: -268.78792
     optimal_solution: [3.2730, 0.0489]
+    manual_thresholds:
+      low:  { c_1: 15.0 }
+      med:  { c_1: 40.0 }
+      high: { c_1: 60.0 }
 
   - name: "mystery"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
     objective_optimum: -1.174261
     optimal_solution: [2.5044, 2.5778]
+    manual_thresholds:
+      low:  { c_1: 0.15 }
+      med:  { c_1: 0.25 }
+      high: { c_1: 0.35 }
 
   - name: "cantilevered_beam"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: 92.7693
     optimal_solution: [9.4846, 0.1, 0.1, 7.0]
+    manual_thresholds:
+      low:  { c_1: 0.5, c_2: 0.65 }
+      med:  { c_1: 1.0, c_2: 0.95 }
+      high: { c_1: 1.5, c_2: 1.4 }
 
   - name: "pressure_vessel"
     constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
     objective_symbol: "f_1"
     objective_optimum: 6059.71874187
     optimal_solution: [13.00001, 7.0, 42.0984456, 176.6366]
+    # carried over from the previous auto-computed values
+    manual_thresholds:
+      low:  { c_1: 0.06329166666666668, c_2: 0.030758333333333332, c_3: 0.04971719201935277, c_4: 0.0 }
+      med:  { c_1: 0.12658333333333335, c_2: 0.061516666666666664, c_3: 0.09943438403870554, c_4: 0.0 }
+      high: { c_1: 0.2531666666666667,  c_2: 0.12303333333333333,  c_3: 0.19886876807741108, c_4: 0.0 }
 
   - name: "townsend"
     constraint_symbols: ["c_1"]
     objective_symbol: "f_1"
     objective_optimum: -2.0239884
     optimal_solution: [2.0052938, 1.1944509]
+    # carried over from the previous auto-computed values
+    manual_thresholds:
+      low:  { c_1: 0.0745007621681161 }
+      med:  { c_1: 0.1490015243362322 }
+      high: { c_1: 0.2980030486724644 }
 
   - name: "g2"
     constraint_symbols: ["c_1", "c_2"]
@@ -112,18 +148,30 @@ problems:
         0.44424700958760,
         0.44038285956317,
       ]
+    manual_thresholds:
+      low:  { c_1: 0.05, c_2: 20.0 }
+      med:  { c_1: 0.10, c_2: 40.0 }
+      high: { c_1: 0.15, c_2: 60.0 }
 
   - name: "g6"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -6961.81387558015
     optimal_solution: [14.095, 0.8429607892154802]
+    manual_thresholds:
+      low:  { c_1: 0.25, c_2: 0.15 }
+      med:  { c_1: 0.50, c_2: 0.25 }
+      high: { c_1: 0.75, c_2: 0.35 }
 
   - name: "g8"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -0.0958250414180359
     optimal_solution: [1.22797135260752599, 4.24537336612274885]
+    manual_thresholds:
+      low:  { c_1: 0.25, c_2: 10.0 }
+      med:  { c_1: 0.50, c_2: 15.0 }
+      high: { c_1: 0.75, c_2: 20.0 }
 
   - name: "g9"
     constraint_symbols: ["c_1", "c_2", "c_3", "c_4"]
@@ -139,12 +187,21 @@ problems:
         1.03813092302119347,
         1.59422663221959926,
       ]
+    manual_thresholds:
+      low:  { c_1: 100.0, c_2: 2.0, c_3: 2.0, c_4: 10.0 }
+      med:  { c_1: 200.0, c_2: 4.0, c_3: 4.0, c_4: 15.0 }
+      high: { c_1: 300.0, c_2: 6.0, c_3: 6.0, c_4: 20.0 }
 
   - name: "g24"
     constraint_symbols: ["c_1", "c_2"]
     objective_symbol: "f_1"
     objective_optimum: -5.50801327159536
     optimal_solution: [2.329520197477607, 3.17849307411768]
+    # carried over from the previous auto-computed values
+    manual_thresholds:
+      low:  { c_1: 0.09880160634261942, c_2: 0.2 }
+      med:  { c_1: 0.19760321268523884, c_2: 0.4 }
+      high: { c_1: 0.3952064253704777,  c_2: 0.8 }
 
 ## problems for which summary statistics make sense
 
