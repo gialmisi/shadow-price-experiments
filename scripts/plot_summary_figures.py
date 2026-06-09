@@ -25,8 +25,8 @@ METRICS: dict[str, dict[str, str]] = {
         "mean": "hv_mean",
         "lower": "hv_ci_lower",
         "upper": "hv_ci_upper",
-        "ytitle": "Hypervolume",
-        "title": "Hypervolume",
+        "ytitle": "Relaxation-gain hypervolume",
+        "title": "Relaxation-gain hypervolume",
         "slug": "hv",
         "optimum_key": "",  # no optimum line
         "count_col": "hv_n_runs",

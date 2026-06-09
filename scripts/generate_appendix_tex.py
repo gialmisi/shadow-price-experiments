@@ -28,8 +28,12 @@ METRICS = [
         "label_prefix": "appendix_hypervolume",
         "caption": (
             "Cumulative hypervolume of the non-dominated threshold-feasible archive"
-            " for {prob}. Dimensions are normalized using the ideal and nadir"
-            " of the reference front. Higher is better."
+            " for {prob}, computed over the relaxation-gain box: the objective axis"
+            " spans $[f^{{*}}_{{\\text{{relaxed}}}}, f^{{*}}_{{\\text{{strict}}}}]$"
+            " and each active constraint axis spans $[0, \\tau_c]$, with strictly"
+            " feasible coordinates clipped to the box floor. Higher is better."
+            " (Falls back to the shadow-feasible-front box when no strict-feasible"
+            " reference set exists.)"
         ),
     },
     {

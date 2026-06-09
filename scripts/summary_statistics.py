@@ -173,42 +173,34 @@ def snakemake_main() -> None:  # noqa: D103
 
     print(f"[{job_label}] Shadow-price summaries done", flush=True)
 
-    # Hypervolume reference point from reference front
-    def filter_relax_only(relaxed: str | None) -> pl.Expr:
-        terms = []
-        for c in c_cols:
-            if relaxed is None:
-                terms.append(pl.col(c) <= 0.0)
-            elif c == relaxed:
-                terms.append(pl.col(c) <= float(thresholds.get(c, 0.0)))
-            else:
-                terms.append(pl.col(c) <= 0.0)
-        return pl.all_horizontal(terms)
-
-    # Shadow front nadir: collect all shadow-feasible points from the reference
-    # front (fully feasible + each single-constraint relaxation) and take the
-    # per-dimension maximum (worst) as the reference point for HV.
-    shadow_feasible_parts = [df_front.filter(filter_relax_only(relaxed=None))]
-    for ci in c_cols:
-        shadow_feasible_parts.append(df_front.filter(filter_relax_only(relaxed=ci)))
-
-    shadow_feasible = pl.concat(shadow_feasible_parts).unique()
+    # Relaxation-gain HV box (with fallback to the original shadow-feasible-front box):
+    #   - objective axis: [f*_relaxed, f*_strict]
+    #       f*_strict  = best objective on reference front with all c <= 0
+    #       f*_relaxed = best objective on reference front with all c <= threshold
+    #   - each constraint axis: [0, threshold_c]
+    # Strict-feasible coordinates (c <= 0) and below-reference objective (f < f*_relaxed)
+    # clip to the box floor, giving full width on the corresponding axis. Points outside
+    # the box (c > threshold or f > f*_strict) are dropped.
+    # Fallback to the original box when no strict-feasible reference set exists or
+    # relaxation provides no objective gain (f*_strict <= f*_relaxed).
+    joint_threshold_expr = pl.all_horizontal(
+        [pl.col(c) <= float(thresholds.get(c, 0.0)) for c in c_cols]
+    )
+    shadow_feasible = df_front.filter(joint_threshold_expr).unique()
     if shadow_feasible.height == 0:
         raise ValueError("No shadow-feasible points on the reference front.")
 
-    # Ideal (min) and nadir (max) per dimension on the shadow-feasible front
-    ideal_vals = np.array(shadow_feasible.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0), dtype=float)
-    nadir_vals = np.array(shadow_feasible.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0), dtype=float)
-    sf_ranges = nadir_vals - ideal_vals
+    strict_feasible = df_front.filter(pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols]))
+    f_strict = float(strict_feasible[f_col].min()) if strict_feasible.height > 0 else None
+    f_relaxed = float(shadow_feasible[f_col].min())
+    use_relax_box = f_strict is not None and f_strict > f_relaxed
 
     # Evidence-based dimension filtering: drop constraints with weak evidence
     evidence = thresholds_doc.get("evidence", {})
-    active_mask = sf_ranges > 1e-12
-    active_mask[0] = True  # Always keep the objective
-
+    active_mask = np.ones(len(dim_cols), dtype=bool)
     dropped_meta = {}
     for i, c in enumerate(c_cols):
-        col_idx = i + 1  # offset by 1 because objective is first
+        col_idx = i + 1
         ev = evidence.get(c, {})
         n_ev = ev.get("n", 0)
         source = ev.get("source", "")
@@ -219,25 +211,66 @@ def snakemake_main() -> None:  # noqa: D103
             active_mask[col_idx] = False
             dropped_meta[c] = {"reason": "insufficient_evidence", "n": n_ev, "threshold": 10}
 
-    # Build sidecar metadata
+    if use_relax_box:
+        # Drop constraint dims whose threshold has no positive width
+        for i, c in enumerate(c_cols):
+            if float(thresholds[c]) <= 0.0 and active_mask[i + 1]:
+                active_mask[i + 1] = False
+                dropped_meta.setdefault(c, {"reason": "threshold_nonpositive"})
+        ideal_vals = np.zeros(len(dim_cols))
+        ideal_vals[0] = f_relaxed
+        range_full = np.empty(len(dim_cols))
+        range_full[0] = f_strict - f_relaxed
+        for i, c in enumerate(c_cols):
+            range_full[i + 1] = float(thresholds[c])
+        range_full = np.where(range_full > 0, range_full, 1.0)
+        ref_full = np.ones(len(dim_cols))
+        hv_box_kind = "relax"
+    else:
+        # Fallback: shadow-feasible-front-based box (the original definition)
+        ideal_vals = np.array(shadow_feasible.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0), dtype=float)
+        nadir_vals = np.array(shadow_feasible.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0), dtype=float)
+        sf_ranges = nadir_vals - ideal_vals
+        for i in range(1, len(dim_cols)):
+            if sf_ranges[i] <= 1e-12 and active_mask[i]:
+                active_mask[i] = False
+                dropped_meta.setdefault(c_cols[i - 1], {"reason": "zero_range_on_shadow_front"})
+        range_full = np.where(sf_ranges > 0, sf_ranges, 1.0)
+        ref_full = np.empty(len(dim_cols))
+        for i, dname in enumerate(dim_cols):
+            if dname == f_col:
+                ref_full[i] = 1.0 + eps_percent
+            else:
+                ref_full[i] = (float(thresholds[dname]) - ideal_vals[i]) / range_full[i]
+        hv_box_kind = "current_fallback"
+
     active_dim_names = [dim_cols[i] for i in range(len(dim_cols)) if active_mask[i]]
+    ideal_active = ideal_vals[active_mask]
+    range_active = range_full[active_mask]
+    ref_norm = ref_full[active_mask]
+    hv_ind = moocore.Hypervolume(ref=ref_norm, maximise=False)
+
+    ref_orig = ideal_active + ref_norm * range_active
     hv_meta = {
+        "hv_box_kind": hv_box_kind,
         "hv_dimensions": {
             "all": dim_cols,
             "active": active_dim_names,
             "dropped": dropped_meta if dropped_meta else None,
-        }
+        },
+        "hv_reference_point": {
+            active_dim_names[k]: {
+                "normalized": float(ref_norm[k]),
+                "original": float(ref_orig[k]),
+            }
+            for k in range(len(active_dim_names))
+        },
+        "hv_relax_anchors": {
+            "f_strict": f_strict,
+            "f_relaxed": f_relaxed,
+            "objective_gain": (f_strict - f_relaxed) if f_strict is not None else None,
+        },
     }
-
-    # Normalize to [0, 1] using ideal/nadir so all dimensions contribute equally.
-    # ref is set to 1 + eps in the normalized space.
-    ideal_active = ideal_vals[active_mask]
-    range_active = sf_ranges[active_mask]
-    # Guard against zero range (shouldn't happen after active_mask, but be safe)
-    range_active = np.where(range_active > 0, range_active, 1.0)
-
-    ref_norm = np.ones(int(active_mask.sum())) * (1.0 + eps_percent)
-    hv_ind = moocore.Hypervolume(ref=ref_norm, maximise=False)
 
     def normalize(pts: np.ndarray) -> np.ndarray:
         return (pts - ideal_active) / range_active
@@ -270,6 +303,12 @@ def snakemake_main() -> None:  # noqa: D103
             if new_pts is None or new_pts.shape[0] == 0:
                 hv_rows.append((int(run_id), int(gen), prev_hv))
                 continue
+
+            # Clip strict-feasible / below-reference coordinates to the box floor.
+            # No-op for the fallback box (its ideal is the shadow-feasible front min,
+            # so normalized coords are non-negative by construction).
+            if hv_box_kind == "relax":
+                new_pts = np.maximum(new_pts, 0.0)
 
             # Ref-box filter new points only (archive already passed)
             new_pts = new_pts[(new_pts <= ref_norm).all(axis=1)]
