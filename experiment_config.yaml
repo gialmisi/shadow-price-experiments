@@ -22,6 +22,10 @@ experiment_xover_distribution: 3
 experiment_distribution_index: 1
 experiment_mutation_probability_factor: 1  # multiplier for 1/n_vars
 
+# Niching for the 'ranking' mode in experiment_1.py: "crowding", "knearest", or "kth"
+ranking_niching: "kth"
+ranking_niching_k: 3
+
 # Data generation
 
 modes: ["baseline", "relaxed", "ranking"]

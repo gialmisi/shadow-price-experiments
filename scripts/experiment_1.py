@@ -69,6 +69,8 @@ def run_nsga2_with_mode(
         constraints=constraints,
         population_size=pop_size,
         mode=mode,
+        niching=str(snakemake.config.get("ranking_niching", "crowding")),
+        niching_k=int(snakemake.config.get("ranking_niching_k", 3)),
     )
     nsga2_options.template.generator = generator.LHSGeneratorOptions(n_points=pop_size)
     nsga2_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
