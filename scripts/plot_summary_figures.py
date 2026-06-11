@@ -8,7 +8,11 @@ import numpy as np
 import polars as pl
 import yaml
 from matplotlib.ticker import FixedLocator, FuncFormatter
-from snakemake.script import snakemake
+
+try:
+    from snakemake.script import snakemake  # snakemake <= 8.x
+except ImportError:
+    pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 
 METRICS: dict[str, dict[str, str]] = {
     "best_so_far": {

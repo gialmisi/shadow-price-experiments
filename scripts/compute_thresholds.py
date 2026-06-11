@@ -16,7 +16,11 @@ from typing import Any
 
 import polars as pl
 import yaml
-from snakemake.script import snakemake
+
+try:
+    from snakemake.script import snakemake  # snakemake <= 8.x
+except ImportError:
+    pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 
 LEVELS = ["low", "med", "high"]
 

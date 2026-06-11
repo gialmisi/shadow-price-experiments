@@ -270,11 +270,11 @@ plotting:
   # Per (problem, metric) inset zoom: show a small zoomed-in subplot
   inset_overrides:
     g9:best_so_far:
-      ylim: [650, 1000]
+      ylim: [678, 800]
       xlim_evals_start: 500
       position: [0.45, 0.45, 0.50, 0.50]
     g9:shadow_price_diff:
-      ylim: [150, 400]
+      ylim: [40, 200]
       xlim_evals_start: 500
       position: [0.45, 0.45, 0.50, 0.50]
 

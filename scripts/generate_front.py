@@ -2,7 +2,11 @@
 
 import numpy as np
 import polars as pl
-from snakemake.script import snakemake
+
+try:
+    from snakemake.script import snakemake  # snakemake <= 8.x
+except ImportError:
+    pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 from utils import PROBLEM_BUILDERS
 
 from desdeo.emo import algorithms, crossover, mutation, selection, termination

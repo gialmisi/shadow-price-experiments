@@ -16,7 +16,11 @@ import numpy as np
 import polars as pl
 import yaml
 from scipy.stats import wilcoxon
-from snakemake.script import snakemake
+
+try:
+    from snakemake.script import snakemake  # snakemake <= 8.x
+except ImportError:
+    pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 
 # Metrics where higher is better (all others: lower is better)
 _HIGHER_IS_BETTER = {"hv"}

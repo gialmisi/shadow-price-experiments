@@ -5,7 +5,11 @@ import numpy as np
 import polars as pl
 import yaml
 from scipy.stats import t
-from snakemake.script import snakemake
+
+try:
+    from snakemake.script import snakemake  # snakemake <= 8.x
+except ImportError:
+    pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 
 from desdeo.tools.non_dominated_sorting import non_dominated_merge
 
@@ -183,9 +187,7 @@ def snakemake_main() -> None:  # noqa: D103
     # the box (c > threshold or f > f*_strict) are dropped.
     # Fallback to the original box when no strict-feasible reference set exists or
     # relaxation provides no objective gain (f*_strict <= f*_relaxed).
-    joint_threshold_expr = pl.all_horizontal(
-        [pl.col(c) <= float(thresholds.get(c, 0.0)) for c in c_cols]
-    )
+    joint_threshold_expr = pl.all_horizontal([pl.col(c) <= float(thresholds.get(c, 0.0)) for c in c_cols])
     shadow_feasible = df_front.filter(joint_threshold_expr).unique()
     if shadow_feasible.height == 0:
         raise ValueError("No shadow-feasible points on the reference front.")
@@ -207,7 +209,11 @@ def snakemake_main() -> None:  # noqa: D103
         if source == "random_sampling":
             active_mask[col_idx] = False
             dropped_meta[c] = {"reason": "random_sampling", "n": n_ev}
-        elif n_ev < 10:
+        elif source != "manual" and n_ev < 10:
+            # Hand-picked manual thresholds are deliberate and never dropped, even though
+            # compute_thresholds.py records n=1 for them. Without this exemption,
+            # single-constraint problems end up with n_active=1 and segfault moocore's
+            # 1D Hypervolume.
             active_mask[col_idx] = False
             dropped_meta[c] = {"reason": "insufficient_evidence", "n": n_ev, "threshold": 10}
 
