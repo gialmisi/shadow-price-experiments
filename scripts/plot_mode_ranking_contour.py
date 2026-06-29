@@ -49,6 +49,19 @@ _FEAS_STYLE = {
     "infeasible": {"color": "#D55E00", "label": "infeasible ($c>$ threshold)"},
 }
 
+_PROBLEM_LABEL = {
+    "branin": "Branin",
+    "mystery": "Mystery",
+    "cantilevered_beam": "Cantilevered beam",
+    "pressure_vessel": "Pressure vessel",
+    "townsend": "Townsend",
+    "g2": "G02",
+    "g6": "G06",
+    "g8": "G08",
+    "g9": "G09",
+    "g24": "G24",
+}
+
 
 def feasibility_category(c1: float, c2: float, tau1: float, tau2: float) -> str:
     """Classify a point by strict / threshold-only / infeasible feasibility."""
@@ -209,9 +222,10 @@ def main() -> None:
     cx_lab = f"${c_cols[0]}$"
     cy_lab = f"${c_cols[1]}$"
     obj_lab = f"min objective (${obj_sym}$)"
+    problem_label = _PROBLEM_LABEL.get(args.problem, args.problem)
     suptitle = (
-        f"{args.problem}  ct={args.ct}  thresholds: ${c_cols[0]} \\leq {tau1:.4g}$, ${c_cols[1]} \\leq {tau2:.4g}$  "
-        f"-- {n_pts} random candidates ranked by each mode"
+        f"{problem_label} ranking with thresholds ${c_cols[0]} \\leq {tau1:.4g}$, ${c_cols[1]} \\leq {tau2:.4g}$"
+        f"  ({n_pts} random candidates; rank 1 = best)"
     )
 
     feas_handles = [
@@ -245,14 +259,22 @@ def main() -> None:
         ax.set_ylim(ylim)
         ax.set_xlabel(cx_lab)
 
-    def add_overlays(ax: plt.Axes, point_labels: list[str]) -> None:
-        """Reference lines plus the reference optima and the candidate markers with labels."""
+    def add_overlays(ax: plt.Axes, point_labels: list[str], alpha: float = 1.0) -> None:
+        """Reference lines plus the reference optima and the candidate markers with labels.
+
+        ``alpha`` sets the opacity of the optima/candidate markers and their labels (the reference
+        lines stay fully opaque); used to overlay the candidates faintly on the ranking field.
+        """
         add_reference_lines(ax)
         if ref_strict_pt is not None:
-            ax.scatter(*ref_strict_pt, marker="*", s=160, facecolor="gold", edgecolor="black", linewidths=1.0, zorder=5)
+            ax.scatter(
+                *ref_strict_pt, marker="*", s=160, facecolor="gold", edgecolor="black", linewidths=1.0,
+                alpha=alpha, zorder=5,
+            )
         if ref_relax_pt is not None:
             ax.scatter(
-                *ref_relax_pt, marker="*", s=160, facecolor="magenta", edgecolor="black", linewidths=1.0, zorder=5
+                *ref_relax_pt, marker="*", s=160, facecolor="magenta", edgecolor="black", linewidths=1.0,
+                alpha=alpha, zorder=5,
             )
         for i in range(n_pts):
             ax.scatter(
@@ -263,6 +285,7 @@ def main() -> None:
                 facecolor=_FEAS_STYLE[cats[i]]["color"],
                 edgecolor="black",
                 linewidths=0.8,
+                alpha=alpha,
                 zorder=6,
             )
             # Anchor the label's lower-left corner at the marker centre so it overlaps the circle a little.
@@ -276,6 +299,7 @@ def main() -> None:
                 fontsize=10,
                 fontweight="bold",
                 color="black",
+                alpha=alpha,
                 zorder=7,
                 path_effects=[pe.withStroke(linewidth=2.2, foreground="white")],
             )
@@ -362,43 +386,49 @@ def main() -> None:
         fig.suptitle(suptitle, y=1.02)
     elif args.layout == "contourrank":
         n_modes = len(modes)
-        fig, axes = plt.subplots(2, n_modes, figsize=(5.2 * n_modes, 9.4), sharex=True, sharey=True)
+        fig = plt.figure(figsize=(5.2 * n_modes, 9.9))
+        top_sf, bot_sf = fig.subfigures(2, 1, hspace=0.03)
+
+        # Top subfigure: objective contour per mode.
+        ax_top = np.atleast_1d(top_sf.subplots(1, n_modes, sharex=True, sharey=True))
         cf_obj = None
         for i, mode in enumerate(modes):
-            cf_obj = draw_scatter(axes[0][i], with_ids=False, rank=ranks_by_mode[mode])
-            axes[0][i].set_title(f"{mode.capitalize()}  (rank: 1 = best)")
-        axes[0][0].set_ylabel(cy_lab)
-
-        Xr, Yr, fields = compute_rank_fields(args.rank_nbins)
-        rank_levels = np.linspace(0.0, 1.0, 11)
-        cf_rank = None
-        for i, mode in enumerate(modes):
-            # Field row: clean field with only the reference lines (no candidate markers).
-            # Distinct colourmap from the objective row (still perceptually uniform / CVD-safe).
-            cf_rank = axes[1][i].contourf(Xr, Yr, fields[mode], levels=rank_levels, cmap="plasma_r")
-            add_reference_lines(axes[1][i])
-            axes[1][i].set_title(f"{mode.capitalize()}  ranking field")
-        axes[1][0].set_ylabel(cy_lab)
-
-        # Matching gradient scales: same colormap and geometry for both rows, anchored to the top
-        # of each row's right margin (leaving room for the legend beneath the lower one).
-        cb1 = fig.colorbar(cf_obj, ax=list(axes[0]), shrink=0.7, pad=0.02, anchor=(0.0, 1.0), panchor=(0.0, 1.0))
+            cf_obj = draw_scatter(ax_top[i], with_ids=False, rank=ranks_by_mode[mode])
+            ax_top[i].set_title(f"{mode.capitalize()} mode")
+        ax_top[0].set_ylabel(cy_lab)
+        cb1 = top_sf.colorbar(cf_obj, ax=list(ax_top), shrink=0.7, pad=0.02, anchor=(0.0, 1.0), panchor=(0.0, 1.0))
         cb1.set_label(obj_lab)
-        cb2 = fig.colorbar(cf_rank, ax=list(axes[1]), shrink=0.7, pad=0.02, anchor=(0.0, 1.0), panchor=(0.0, 1.0))
-        cb2.set_label("ranking field (normalized rank, 0 = best)")
-        cpos = cb2.ax.get_position()
-        fig.legend(
+        # Legend below the objective gradient scale (colorbar position is subfigure-relative).
+        cpos = cb1.ax.get_position()
+        top_sf.legend(
             handles=feas_handles + star_handles,
             loc="upper center",
-            bbox_to_anchor=(cpos.x0 + cpos.width / 2.0, cpos.y0 - 0.04),
-            bbox_transform=fig.transFigure,
+            bbox_to_anchor=(cpos.x0 + cpos.width / 2.0, cpos.y0 - 0.03),
+            bbox_transform=top_sf.transSubfigure,
             fontsize=7,
             framealpha=0.92,
             ncol=1,
             handletextpad=0.4,
             borderaxespad=0.0,
         )
-        fig.suptitle(suptitle, y=1.01)
+        top_sf.suptitle("Objective field", fontweight="bold")
+
+        # Bottom subfigure: ranking field per mode (clean field, reference lines only, distinct cmap).
+        Xr, Yr, fields = compute_rank_fields(args.rank_nbins)
+        rank_levels = np.linspace(0.0, 1.0, 11)
+        ax_bot = np.atleast_1d(bot_sf.subplots(1, n_modes, sharex=True, sharey=True))
+        cf_rank = None
+        for i, mode in enumerate(modes):
+            cf_rank = ax_bot[i].contourf(Xr, Yr, fields[mode], levels=rank_levels, cmap="plasma_r")
+            # Clean field: reference lines only. The candidates are not overlaid here because their
+            # rank among the 20 is computed on a different population than the field, so showing them
+            # would misleadingly suggest the numbers match the field's normalized ranks.
+            add_reference_lines(ax_bot[i])
+            ax_bot[i].set_title(f"{mode.capitalize()} mode")
+        ax_bot[0].set_ylabel(cy_lab)
+        cb2 = bot_sf.colorbar(cf_rank, ax=list(ax_bot), shrink=0.7, pad=0.02, anchor=(0.0, 1.0), panchor=(0.0, 1.0))
+        cb2.set_label("ranking field (normalized rank, 0 = best)")
+        bot_sf.suptitle("Ranking field", fontweight="bold")
     else:  # combo: constraint-space scatter + rank-flow bump chart
         from matplotlib import gridspec
 
