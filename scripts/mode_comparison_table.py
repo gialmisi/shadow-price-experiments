@@ -57,7 +57,8 @@ _PROBLEM_LABEL = {
 }
 
 ALPHA = 0.10
-BONFERRONI_TESTS = 2
+# Three pairwise comparisons among the three modes (baseline/relaxed/ranking) per cell.
+BONFERRONI_TESTS = 3
 ALPHA_CORRECTED = ALPHA / BONFERRONI_TESTS
 
 
@@ -244,32 +245,40 @@ def snakemake_main() -> None:  # noqa: D103
     result_df = pl.DataFrame(rows)
     result_df.write_parquet(out_parquet)
 
-    # 2. Statistical testing: Relaxed vs Baseline, Ranking vs Baseline
-    stats_rows: list[dict] = []
-    # sig_results[(problem, psize, ct_level, mode)] = True/False
-    sig_results: dict[tuple[str, int, str, str], bool] = {}
-    sig_baseline_beats: dict[tuple[str, int, str, str], bool] = {}
+    # 2. Statistical testing: all pairwise comparisons, then determine the winner set per cell.
+    #
+    # Winner rule: take the mode with the best mean. If it is significantly better than at
+    # least one other mode, it is the winner; additionally mark every mode that is NOT
+    # significantly worse than it (i.e. tied-for-best). If the best-mean mode is not
+    # significantly better than any other mode, there is no winner and nothing is marked.
+    from itertools import combinations
 
-    baseline_mode = modes[0]  # "baseline"
-    alt_modes = modes[1:]  # ["relaxed", "ranking"]
+    stats_rows: list[dict] = []
+    # winners[(problem, psize, ct_level)] = set of winning modes (possibly empty)
+    winners: dict[tuple[str, int, str], set[str]] = {}
 
     for prob in problems:
         for ps in population_sizes:
             for ct in ct_levels:
-                baseline_key = (prob, ps, ct, baseline_mode)
-                baseline_vals = per_run_data.get(baseline_key)
+                cell_vals = {m: per_run_data.get((prob, ps, ct, m)) for m in modes}
 
-                for alt_mode in alt_modes:
-                    alt_key = (prob, ps, ct, alt_mode)
-                    alt_vals = per_run_data.get(alt_key)
+                # Per-mode metric mean (mean absolute error for closer-to-zero metrics).
+                cell_means: dict[str, float | None] = {}
+                for m in modes:
+                    v = cell_vals[m]
+                    cell_means[m] = float(np.nanmean(np.abs(v) if closer_to_zero else v)) if v is not None else None
 
-                    if baseline_vals is None or alt_vals is None:
+                # Pairwise Wilcoxon tests. pair_better[(a, b)] = True iff a is significantly better than b.
+                pair_better: dict[tuple[str, str], bool] = {}
+                for a, b in combinations(modes, 2):
+                    av, bv = cell_vals[a], cell_vals[b]
+                    if av is None or bv is None:
                         stats_rows.append(
                             {
                                 "problem": prob,
                                 "population_size": ps,
                                 "ct_level": ct,
-                                "comparison": f"{alt_mode}_vs_{baseline_mode}",
+                                "comparison": f"{b}_vs_{a}",
                                 "W": None,
                                 "p_value": None,
                                 "significant": False,
@@ -278,39 +287,50 @@ def snakemake_main() -> None:  # noqa: D103
                                 "n_nonzero": 0,
                             }
                         )
-                        sig_results[alt_key] = False
-                        sig_baseline_beats[alt_key] = False
+                        pair_better[(a, b)] = pair_better[(b, a)] = False
                         continue
 
-                    # Ensure paired alignment; drop pairs where either is NaN
-                    n = min(len(baseline_vals), len(alt_vals))
-                    bv, av = baseline_vals[:n], alt_vals[:n]
-                    valid = ~(np.isnan(bv) | np.isnan(av))
+                    # Paired alignment; drop pairs where either value is NaN.
+                    n = min(len(av), len(bv))
+                    a2, b2 = av[:n], bv[:n]
+                    valid = ~(np.isnan(a2) | np.isnan(b2))
+                    # _wilcoxon_test(reference, candidate): direction "alt_better" => candidate (b) is better.
                     result = _wilcoxon_test(
-                        bv[valid],
-                        av[valid],
+                        a2[valid],
+                        b2[valid],
                         higher_is_better=higher_is_better,
                         closer_to_zero=closer_to_zero,
                     )
-
                     stats_rows.append(
                         {
                             "problem": prob,
                             "population_size": ps,
                             "ct_level": ct,
-                            "comparison": f"{alt_mode}_vs_{baseline_mode}",
+                            "comparison": f"{b}_vs_{a}",
                             **result,
                         }
                     )
+                    pair_better[(a, b)] = result["significant"] and result["direction"] == "baseline_better"
+                    pair_better[(b, a)] = result["significant"] and result["direction"] == "alt_better"
 
-                    # Track both directions of significance separately
-                    sig_results[alt_key] = result["significant"] and result["direction"] == "alt_better"
-                    sig_baseline_beats[alt_key] = result["significant"] and result["direction"] == "baseline_better"
+                # Winner set.
+                valid_modes = [m for m in modes if cell_means[m] is not None]
+                if not valid_modes:
+                    winners[(prob, ps, ct)] = set()
+                    continue
+                best = (max if higher_is_better else min)(valid_modes, key=lambda m: cell_means[m])
+                others = [m for m in valid_modes if m != best]
+                best_beats = {m: pair_better.get((best, m), False) for m in others}
+                if any(best_beats.values()):
+                    # A significant winner exists: best + every mode not significantly worse than it.
+                    winners[(prob, ps, ct)] = {best} | {m for m in others if not best_beats[m]}
+                else:
+                    winners[(prob, ps, ct)] = set()
 
     stats_df = pl.DataFrame(stats_rows)
     stats_df.write_parquet(out_stats_parquet)
 
-    # 3. Build main LaTeX table (bold = significantly better than baseline)
+    # 3. Build main LaTeX table (bold = winner; see winner rule above).
     idx: dict[tuple[str, int, str], dict[str, float | None]] = {}
     for r in rows:
         key = (r["problem"], r["population_size"], r["ct_level"])
@@ -323,23 +343,11 @@ def snakemake_main() -> None:  # noqa: D103
     _CT_LABEL = {"low": "low", "med": "medium", "high": "high"}
     n_psizes = len(population_sizes)
 
-    # Count significant wins per (ct_level, mode) column.
-    # For alt modes: how many cells where alt was significantly better than baseline.
-    # For baseline: how many cells where baseline was significantly better than BOTH alt modes.
+    # Count winning cells per (ct_level, mode) column.
     win_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
-    for (prob, ps, ct, mode), is_sig in sig_results.items():
-        if is_sig:
-            win_counts[(ct, mode)] = win_counts.get((ct, mode), 0) + 1
-
-    baseline_mode = modes[0]
-    alt_modes = modes[1:]
-    for prob in problems:
-        for ps in population_sizes:
-            for ct in ct_levels:
-                # Baseline wins this cell if it significantly beat every alt mode
-                beats_all = all(sig_baseline_beats.get((prob, ps, ct, m), False) for m in alt_modes)
-                if beats_all:
-                    win_counts[(ct, baseline_mode)] = win_counts.get((ct, baseline_mode), 0) + 1
+    for (prob, ps, ct), wset in winners.items():
+        for m in wset:
+            win_counts[(ct, m)] = win_counts.get((ct, m), 0) + 1
 
     lines: list[str] = []
     lines.append("% Auto-generated by mode_comparison_table.py")
@@ -357,9 +365,10 @@ def snakemake_main() -> None:  # noqa: D103
         + caption_metric
         + " by mode ("
         + abbrev_legend
-        + ").  \\textbf{Bold}: an alternative mode is significantly better than Baseline,"
-        + " or Baseline is significantly better than both alternative modes"
-        + f" (paired Wilcoxon, $\\alpha={ALPHA}$, Bonferroni-corrected)."
+        + ").  \\textbf{Bold}: the winning mode(s), i.e. the best-mean mode when it is"
+        + " significantly better than at least one other mode, together with any mode not"
+        + " significantly worse than it; no mark when no significant winner exists"
+        + f" (paired two-sided Wilcoxon, $\\alpha={ALPHA}$, Bonferroni-corrected)."
         + (" " + caption_note if caption_note else "")
         + "}"
     )
@@ -416,8 +425,7 @@ def snakemake_main() -> None:  # noqa: D103
             data_cells: list[str] = [str(ps)]
             for ct in ct_levels:
                 mode_vals = idx.get((prob, ps, ct), {})
-                # Baseline wins this cell if it significantly beat every alt mode
-                baseline_wins_cell = all(sig_baseline_beats.get((prob, ps, ct, alt), False) for alt in alt_modes)
+                cell_winners = winners.get((prob, ps, ct), set())
                 for m in modes:
                     v = mode_vals.get(m)
                     if v is None:
@@ -425,23 +433,17 @@ def snakemake_main() -> None:  # noqa: D103
                         continue
                     display_v = v * scale if exp != 0 else v
                     s = _sigfig(display_v, 3, max_decimals=mdp)
-                    # Bold if this mode is significantly better than its counterparts:
-                    #   alt mode: significantly better than baseline
-                    #   baseline: significantly better than BOTH alt modes
-                    if m == baseline_mode:
-                        if baseline_wins_cell:
-                            s = f"\\textbf{{{s}}}"
-                    elif sig_results.get((prob, ps, ct, m), False):
+                    # Bold if this mode is a winner in this cell.
+                    if m in cell_winners:
                         s = f"\\textbf{{{s}}}"
                     data_cells.append(s)
             parts_row: list[str] = [prob_cell] + data_cells
             lines.append(" & ".join(parts_row) + " \\\\")
 
     # Bottom row: significant win counts per column.
-    # Baseline column: cells where baseline beat BOTH alt modes significantly.
-    # Alt columns: cells where alt mode beat baseline significantly.
+    # Per (ct level, mode): number of cells in which that mode is a winner.
     lines.append("\\midrule")
-    count_cells: list[str] = ["\\multicolumn{2}{r}{\\small Sig.\\ wins}"]
+    count_cells: list[str] = ["\\multicolumn{2}{r}{\\small Wins}"]
     for ct in ct_levels:
         for m in modes:
             count_cells.append(f"\\textbf{{{win_counts.get((ct, m), 0)}}}")
@@ -459,8 +461,9 @@ def snakemake_main() -> None:  # noqa: D103
     stats_lines.append("% Auto-generated statistical details by mode_comparison_table.py")
     stats_lines.append("\\begin{longtable}{llrlllrrrl}")
     stats_lines.append(
-        "\\caption{Wilcoxon signed-rank test results: alternative modes vs.\\ Baseline"
-        " ($\\alpha=" + str(ALPHA) + "$, Bonferroni-corrected to $" + str(ALPHA_CORRECTED) + "$).}\\\\"
+        "\\caption{Wilcoxon signed-rank test results: all pairwise mode comparisons"
+        " ($\\alpha=" + str(ALPHA) + "$, Bonferroni-corrected to $" + f"{ALPHA_CORRECTED:.4g}" + "$). "
+        "Direction names the better mode.}\\\\"
     )
     stats_lines.append("\\toprule")
     stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $r$ & Sig. & Direction \\\\")
@@ -472,8 +475,7 @@ def snakemake_main() -> None:  # noqa: D103
     stats_lines.append("\\endhead")
 
     _COMP_LABEL = {
-        f"relaxed_vs_{baseline_mode}": "Rx vs Bs",
-        f"ranking_vs_{baseline_mode}": "Rk vs Bs",
+        f"{b}_vs_{a}": f"{_MODE_ABBREV.get(b, b)} vs {_MODE_ABBREV.get(a, a)}" for a, b in combinations(modes, 2)
     }
 
     for row in stats_rows:
@@ -483,7 +485,14 @@ def snakemake_main() -> None:  # noqa: D103
         p_str = f"{row['p_value']:.4f}" if row["p_value"] is not None else "--"
         r_str = f"{row['rank_biserial']:.3f}" if row["rank_biserial"] is not None else "--"
         sig_str = "Yes" if row["significant"] else "No"
-        dir_str = row["direction"].replace("_", " ")
+        # The comparison "{b}_vs_{a}" maps "alt_better" -> b, "baseline_better" -> a.
+        cand, _, ref = row["comparison"].partition("_vs_")
+        if row["direction"] == "alt_better":
+            dir_str = f"{_MODE_ABBREV.get(cand, cand)} better"
+        elif row["direction"] == "baseline_better":
+            dir_str = f"{_MODE_ABBREV.get(ref, ref)} better"
+        else:
+            dir_str = row["direction"].replace("_", " ")
         stats_lines.append(
             f"{prob_label} & {row['population_size']} & {row['ct_level']} & "
             f"{comp_label} & {w_str} & {p_str} & {r_str} & {sig_str} & {dir_str} \\\\"
