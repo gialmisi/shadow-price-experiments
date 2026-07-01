@@ -230,7 +230,7 @@ def snakemake_main() -> None:  # noqa: D103
         for i, c in enumerate(c_cols):
             range_full[i + 1] = float(thresholds[c])
         range_full = np.where(range_full > 0, range_full, 1.0)
-        ref_full = np.ones(len(dim_cols))
+        ref_full = np.ones(len(dim_cols))  # nadir on each axis; eps margin added below
         hv_box_kind = "relax"
     else:
         # Fallback: shadow-feasible-front-based box (the original definition)
@@ -245,10 +245,16 @@ def snakemake_main() -> None:  # noqa: D103
         ref_full = np.empty(len(dim_cols))
         for i, dname in enumerate(dim_cols):
             if dname == f_col:
-                ref_full[i] = 1.0 + eps_percent
+                ref_full[i] = 1.0
             else:
                 ref_full[i] = (float(thresholds[dname]) - ideal_vals[i]) / range_full[i]
         hv_box_kind = "current_fallback"
+
+    # Expand the nadir reference outward by eps on every (active) axis so that solutions lying
+    # exactly on a nadir boundary still contribute hypervolume (otherwise the strict and threshold
+    # optima would each contribute zero volume). Applied uniformly to both the relax and fallback
+    # boxes.
+    ref_full = ref_full + eps_percent
 
     active_dim_names = [dim_cols[i] for i in range(len(dim_cols)) if active_mask[i]]
     ideal_active = ideal_vals[active_mask]
