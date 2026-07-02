@@ -57,9 +57,8 @@ _PROBLEM_LABEL = {
 }
 
 ALPHA = 0.10
-# Three pairwise comparisons among the three modes (baseline/relaxed/ranking) per cell.
-BONFERRONI_TESTS = 3
-ALPHA_CORRECTED = ALPHA / BONFERRONI_TESTS
+# The Bonferroni correction is applied over all unordered pairs of modes, C(n_modes, 2), and is
+# computed at runtime from the actual mode list so it stays correct as modes are added or removed.
 
 
 def _sigfig(val: float, n: int = 3, max_decimals: int | None = None) -> str:
@@ -104,6 +103,7 @@ def _wilcoxon_test(
     alt_vals: np.ndarray,
     higher_is_better: bool,
     closer_to_zero: bool,
+    alpha: float,
 ) -> dict:
     """Run paired Wilcoxon signed-rank test: is alt significantly better than baseline?
 
@@ -161,7 +161,7 @@ def _wilcoxon_test(
     return {
         "W": float(stat),
         "p_value": float(p_value),
-        "significant": p_value < ALPHA_CORRECTED,
+        "significant": p_value < alpha,
         "rank_biserial": float(r),
         "direction": direction,
         "n_nonzero": n_nonzero,
@@ -171,6 +171,8 @@ def _wilcoxon_test(
 def snakemake_main() -> None:  # noqa: D103
     summaries_meta = list(snakemake.params.summaries_meta)
     modes = list(snakemake.params.modes)
+    # Bonferroni correction over all unordered mode pairs, C(n_modes, 2), per cell.
+    alpha_corrected = ALPHA / max(1, len(modes) * (len(modes) - 1) // 2)
     population_sizes = sorted(snakemake.params.population_sizes)
     ct_levels = list(snakemake.params.ct_levels)
     problems = list(snakemake.params.problems)
@@ -300,6 +302,7 @@ def snakemake_main() -> None:  # noqa: D103
                         b2[valid],
                         higher_is_better=higher_is_better,
                         closer_to_zero=closer_to_zero,
+                        alpha=alpha_corrected,
                     )
                     stats_rows.append(
                         {
@@ -338,7 +341,7 @@ def snakemake_main() -> None:  # noqa: D103
 
     n_ct = len(ct_levels)
     n_modes = len(modes)
-    _MODE_ABBREV = {"baseline": "Bs", "relaxed": "Rx", "ranking": "Rk"}
+    _MODE_ABBREV = {"baseline": "Bs", "relaxed": "Rx", "ranking": "Rk", "hypervolume": "Hv"}
     mode_abbrevs = [_MODE_ABBREV.get(m, m[:2].capitalize()) for m in modes]
     _CT_LABEL = {"low": "low", "med": "medium", "high": "high"}
     n_psizes = len(population_sizes)
@@ -462,7 +465,7 @@ def snakemake_main() -> None:  # noqa: D103
     stats_lines.append("\\begin{longtable}{llrlllrrrl}")
     stats_lines.append(
         "\\caption{Wilcoxon signed-rank test results: all pairwise mode comparisons"
-        " ($\\alpha=" + str(ALPHA) + "$, Bonferroni-corrected to $" + f"{ALPHA_CORRECTED:.4g}" + "$). "
+        " ($\\alpha=" + str(ALPHA) + "$, Bonferroni-corrected to $" + f"{alpha_corrected:.4g}" + "$). "
         "Direction names the better mode.}\\\\"
     )
     stats_lines.append("\\toprule")

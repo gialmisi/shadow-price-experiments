@@ -87,6 +87,13 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=97)
     ap.add_argument("--niching", default=None, help="ranking-mode niching; default: from config")
     ap.add_argument("--niching-k", type=int, default=None)
+    ap.add_argument(
+        "--modes",
+        nargs="*",
+        default=None,
+        help="modes to rank and plot; default: config modes + 'hypervolume'. The backdrop always "
+        "uses the config modes (only those have experiment data files).",
+    )
     ap.add_argument("--clip-pct", nargs=2, type=float, default=[1.0, 99.0])
     ap.add_argument(
         "--layout",
@@ -114,20 +121,27 @@ def main() -> None:
     thresholds = {c: float(thr_doc["levels"][args.ct].get(c, 0.0)) for c in c_cols}
     tau1, tau2 = thresholds[c_cols[0]], thresholds[c_cols[1]]
 
-    modes = cfg["modes"]
+    # Backdrop/candidate sampling uses only modes that have experiment data files (the config
+    # modes). The ranking panels can additionally include modes without data, e.g. 'hypervolume',
+    # since compute_order ranks the shared candidates directly.
+    data_modes = cfg["modes"]
+    modes = args.modes if args.modes else list(dict.fromkeys([*data_modes, "hypervolume"]))
     niching = args.niching or str(cfg.get("ranking_niching", "kth"))
     niching_k = args.niching_k if args.niching_k is not None else int(cfg.get("ranking_niching_k", 3))
 
     # Backdrop: min objective per (c_1, c_2) bin over the combined cloud of all modes (final gen).
     data_dir = Path(args.results_dir) / "data"
     frames = []
-    for mode in modes:
+    for mode in data_modes:
         path = data_dir / f"{args.problem}_{mode}_gen{args.n_gen}_runs{args.runs}_ct{args.ct}_psize{args.psize}.parquet"
         if not path.exists():
-            raise SystemExit(f"missing data file: {path}")
+            print(f"warning: skipping backdrop for mode '{mode}' (no data file yet): {path}")
+            continue
         full = pl.read_parquet(path)
         full = full.filter(pl.col("generation") == int(full["generation"].max()))
         frames.append(full.select([f_col, *c_cols]))
+    if not frames:
+        raise SystemExit(f"no backdrop data files found for {args.problem} (ct={args.ct}, psize={args.psize})")
     combined = pl.concat(frames)
     c1_all = combined[c_cols[0]].to_numpy()
     c2_all = combined[c_cols[1]].to_numpy()

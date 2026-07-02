@@ -28,7 +28,7 @@ ranking_niching_k: 3
 
 # Data generation
 
-modes: ["baseline", "relaxed", "ranking"]
+modes: ["baseline", "relaxed", "ranking", "hypervolume"]
 population_sizes: [12, 36, 60]
 n_generations: 200
 n_runs: 500
