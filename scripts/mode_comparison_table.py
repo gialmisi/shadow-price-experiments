@@ -23,9 +23,46 @@ except ImportError:
     pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 
 # Metrics where higher is better (all others: lower is better)
-_HIGHER_IS_BETTER = {"hv"}
+_HIGHER_IS_BETTER = {"hv", "single_hv"}
 # Metrics where closer to zero is better
 _CLOSER_TO_ZERO = {"shadow_price_diff"}
+# Modes that optimize a metric by construction. They are shown for reference, and the
+# best runner-up among the remaining modes is marked by underlining.
+_REFERENCE_MODE = {"hv": "hypervolume", "single_hv": "hypervolume"}
+
+_TABLE_LABEL = {
+    "best_so_far": "tab:best-so-far",
+    "hv": "tab:hv",
+    "shadow_price_diff": "tab:shadow-error",
+    "shadow_best_so_far": "tab:shadow-best-so-far",
+    "shadow_gen_best": "tab:shadow-gen-best",
+    "joint_gap": "tab:joint-gap",
+    "single_gap": "tab:single-gap",
+    "single_hv": "tab:single-hv",
+}
+
+_DASH_NOTE = " Dashes mark problems without a positive reference gain."
+# (metric description for the caption, note on direction)
+_CAPTION = {
+    "best_so_far": ("best-so-far feasible objective", "Lower is better."),
+    "hv": ("hypervolume of the shadow-front under joint relaxation", "Higher is better."),
+    "shadow_price_diff": ("absolute relaxation-gain error", "Lower is better."),
+    "shadow_best_so_far": ("best-so-far threshold-feasible objective", "Lower is better."),
+    "shadow_gen_best": ("best threshold-feasible objective in the final generation", "Lower is better."),
+    "joint_gap": (
+        "relative optimality gap of the threshold optimum under joint relaxation",
+        "Lower is better." + _DASH_NOTE,
+    ),
+    "single_gap": (
+        "relative optimality gap of the relaxed optimum under single relaxation,"
+        " averaged over the contributing constraints",
+        "Lower is better." + _DASH_NOTE,
+    ),
+    "single_hv": (
+        "hypervolume of the shadow-front under single relaxation, averaged over the contributing constraints",
+        "Higher is better." + _DASH_NOTE,
+    ),
+}
 
 _METRIC_COL = {
     "best_so_far": "run_best_so_far_mean",
@@ -33,6 +70,9 @@ _METRIC_COL = {
     "shadow_gen_best": "shadow_gen_best_mean",
     "hv": "hv_mean",
     "shadow_price_diff": "shadow_price_diff_mean",
+    "joint_gap": "joint_gap_mean",
+    "single_gap": "single_gap_mean",
+    "single_hv": "single_hv_mean",
 }
 
 _PER_RUN_COL = {
@@ -41,6 +81,9 @@ _PER_RUN_COL = {
     "shadow_gen_best": "shadow_gen_best",
     "hv": "hv",
     "shadow_price_diff": "shadow_price_diff",
+    "joint_gap": "joint_gap",
+    "single_gap": "single_gap",
+    "single_hv": "single_hv",
 }
 
 _PROBLEM_LABEL = {
@@ -188,6 +231,7 @@ def snakemake_main() -> None:  # noqa: D103
     per_run_col = _PER_RUN_COL[metric_key]
     higher_is_better = metric_key in _HIGHER_IS_BETTER
     closer_to_zero = metric_key in _CLOSER_TO_ZERO
+    reference_mode = _REFERENCE_MODE.get(metric_key)
 
     # Load true shadow prices from thresholds YAMLs (for error computation)
     true_shadow_price: dict[tuple[str, str], float] = {}
@@ -213,6 +257,8 @@ def snakemake_main() -> None:  # noqa: D103
         df = pl.read_parquet(meta["path"])
         final = df.filter(pl.col("generation") == n_generations)
         val = float(final[col_name][0]) if final.height > 0 and final[col_name][0] is not None else None
+        if val is not None and np.isnan(val):
+            val = None
 
         # Per-run values
         pr_path = meta.get("per_run_path")
@@ -258,6 +304,8 @@ def snakemake_main() -> None:  # noqa: D103
     stats_rows: list[dict] = []
     # winners[(problem, psize, ct_level)] = set of winning modes (possibly empty)
     winners: dict[tuple[str, int, str], set[str]] = {}
+    # runner-ups: same rule applied to the modes that are neither the reference mode nor winners
+    runnerups: dict[tuple[str, int, str], set[str]] = {}
 
     for prob in problems:
         for ps in population_sizes:
@@ -268,7 +316,10 @@ def snakemake_main() -> None:  # noqa: D103
                 cell_means: dict[str, float | None] = {}
                 for m in modes:
                     v = cell_vals[m]
-                    cell_means[m] = float(np.nanmean(np.abs(v) if closer_to_zero else v)) if v is not None else None
+                    if v is None or np.all(np.isnan(v)):
+                        cell_means[m] = None
+                    else:
+                        cell_means[m] = float(np.nanmean(np.abs(v) if closer_to_zero else v))
 
                 # Pairwise Wilcoxon tests. pair_better[(a, b)] = True iff a is significantly better than b.
                 pair_better: dict[tuple[str, str], bool] = {}
@@ -316,19 +367,23 @@ def snakemake_main() -> None:  # noqa: D103
                     pair_better[(a, b)] = result["significant"] and result["direction"] == "baseline_better"
                     pair_better[(b, a)] = result["significant"] and result["direction"] == "alt_better"
 
-                # Winner set.
+                def _winner_set(candidates: list[str]) -> set[str]:
+                    """Best-mean mode if significantly better than some other candidate, plus ties."""
+                    if not candidates:
+                        return set()
+                    best = (max if higher_is_better else min)(candidates, key=lambda m: cell_means[m])
+                    others = [m for m in candidates if m != best]
+                    best_beats = {m: pair_better.get((best, m), False) for m in others}
+                    if any(best_beats.values()):
+                        return {best} | {m for m in others if not best_beats[m]}
+                    return set()
+
                 valid_modes = [m for m in modes if cell_means[m] is not None]
-                if not valid_modes:
-                    winners[(prob, ps, ct)] = set()
-                    continue
-                best = (max if higher_is_better else min)(valid_modes, key=lambda m: cell_means[m])
-                others = [m for m in valid_modes if m != best]
-                best_beats = {m: pair_better.get((best, m), False) for m in others}
-                if any(best_beats.values()):
-                    # A significant winner exists: best + every mode not significantly worse than it.
-                    winners[(prob, ps, ct)] = {best} | {m for m in others if not best_beats[m]}
-                else:
-                    winners[(prob, ps, ct)] = set()
+                winners[(prob, ps, ct)] = _winner_set(valid_modes)
+                runnerups[(prob, ps, ct)] = set()
+                if reference_mode is not None and winners[(prob, ps, ct)]:
+                    rest = [m for m in valid_modes if m != reference_mode and m not in winners[(prob, ps, ct)]]
+                    runnerups[(prob, ps, ct)] = _winner_set(rest)
 
     stats_df = pl.DataFrame(stats_rows)
     stats_df.write_parquet(out_stats_parquet)
@@ -346,23 +401,31 @@ def snakemake_main() -> None:  # noqa: D103
     _CT_LABEL = {"low": "low", "med": "medium", "high": "high"}
     n_psizes = len(population_sizes)
 
-    # Count winning cells per (ct_level, mode) column.
+    # Count winning and runner-up cells per (ct_level, mode) column.
     win_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
     for (prob, ps, ct), wset in winners.items():
         for m in wset:
             win_counts[(ct, m)] = win_counts.get((ct, m), 0) + 1
+    runnerup_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
+    for (prob, ps, ct), rset in runnerups.items():
+        for m in rset:
+            runnerup_counts[(ct, m)] = runnerup_counts.get((ct, m), 0) + 1
 
     lines: list[str] = []
     lines.append("% Auto-generated by mode_comparison_table.py")
     lines.append("\\begin{table}[htbp]")
     lines.append("\\centering")
     abbrev_legend = ", ".join(f"{a} = {m.capitalize()}" for a, m in zip(mode_abbrevs, modes))
-    if closer_to_zero:
-        caption_metric = "shadow price mean absolute error"
-        caption_note = "Lower is better."
-    else:
-        caption_metric = "\\texttt{" + metric_key.replace("_", "\\_") + "}"
-        caption_note = ""
+    caption_metric, caption_note = _CAPTION.get(metric_key, ("\\texttt{" + metric_key.replace("_", "\\_") + "}", ""))
+    reference_note = ""
+    if reference_mode is not None:
+        ref_abbrev = _MODE_ABBREV.get(reference_mode, reference_mode)
+        reference_note = (
+            f" The {reference_mode} ({ref_abbrev}) mode optimizes this metric by construction, so it is"
+            " shown for reference:\\ \\underline{underline} marks the best-performing runner-up among the"
+            " remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
+            " mode's outright win count."
+        )
     lines.append(
         "\\caption{Final-generation mean "
         + caption_metric
@@ -373,16 +436,19 @@ def snakemake_main() -> None:  # noqa: D103
         + " significantly worse than it; no mark when no significant winner exists"
         + f" (paired two-sided Wilcoxon, $\\alpha={ALPHA}$, Bonferroni-corrected)."
         + (" " + caption_note if caption_note else "")
+        + reference_note
         + "}"
     )
-    lines.append("\\normalsize")
-    lines.append("\\setlength{\\tabcolsep}{4pt}")
+    lines.append("\\label{" + _TABLE_LABEL.get(metric_key, "tab:" + metric_key.replace("_", "-")) + "}")
+    lines.append("\\small")
+    lines.append("\\setlength{\\tabcolsep}{2pt}")
+    lines.append("\\resizebox{\\ifdim\\width>\\linewidth\\linewidth\\else\\width\\fi}{!}{%")
     total_data_cols = 1 + n_ct * n_modes
-    _MODE_SHADES = ["gray!0", "gray!10", "gray!20"]
+    _MODE_SHADES = ["gray!0", "gray!10", "gray!20", "gray!30"]
     mode_col_spec = " ".join(
         ">{" + "\\columncolor{" + _MODE_SHADES[i % len(_MODE_SHADES)] + "}}c" for i in range(n_modes)
     )
-    col_spec = "p{0.7cm} @{}r@{\\hspace{8pt}} " + " ".join([mode_col_spec] * n_ct)
+    col_spec = "p{0.7cm} @{\\hspace{3pt}}r@{\\hspace{3pt}} " + " ".join([mode_col_spec] * n_ct)
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
 
     lines.append("\\toprule")
@@ -429,6 +495,7 @@ def snakemake_main() -> None:  # noqa: D103
             for ct in ct_levels:
                 mode_vals = idx.get((prob, ps, ct), {})
                 cell_winners = winners.get((prob, ps, ct), set())
+                cell_runnerups = runnerups.get((prob, ps, ct), set())
                 for m in modes:
                     v = mode_vals.get(m)
                     if v is None:
@@ -436,9 +503,11 @@ def snakemake_main() -> None:  # noqa: D103
                         continue
                     display_v = v * scale if exp != 0 else v
                     s = _sigfig(display_v, 3, max_decimals=mdp)
-                    # Bold if this mode is a winner in this cell.
+                    # Bold if this mode is a winner in this cell, underline if a runner-up.
                     if m in cell_winners:
                         s = f"\\textbf{{{s}}}"
+                    elif m in cell_runnerups:
+                        s = f"\\underline{{{s}}}"
                     data_cells.append(s)
             parts_row: list[str] = [prob_cell] + data_cells
             lines.append(" & ".join(parts_row) + " \\\\")
@@ -449,11 +518,15 @@ def snakemake_main() -> None:  # noqa: D103
     count_cells: list[str] = ["\\multicolumn{2}{r}{\\small Wins}"]
     for ct in ct_levels:
         for m in modes:
-            count_cells.append(f"\\textbf{{{win_counts.get((ct, m), 0)}}}")
+            cell = f"\\textbf{{{win_counts.get((ct, m), 0)}}}"
+            if reference_mode is not None and m != reference_mode:
+                cell += f" ({runnerup_counts.get((ct, m), 0)})"
+            count_cells.append(cell)
     lines.append(" & ".join(count_cells) + " \\\\")
 
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
+    lines.append("}")
     lines.append("\\end{table}")
 
     with open(out_latex, "w", encoding="utf-8") as f:  # noqa: PTH123

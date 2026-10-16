@@ -65,6 +65,36 @@ METRICS: dict[str, dict[str, str]] = {
         "optimum_key": "true_shadow_price",
         "count_col": "shadow_price_diff_n_runs",
     },
+    "joint_gap": {
+        "mean": "joint_gap_mean",
+        "lower": "joint_gap_ci_lower",
+        "upper": "joint_gap_ci_upper",
+        "ytitle": "Relative gap, joint relaxation",
+        "title": "Relative optimality gap of the threshold optimum (joint relaxation)",
+        "slug": "joint_gap",
+        "optimum_key": "",
+        "count_col": "joint_gap_n_runs",
+    },
+    "single_gap": {
+        "mean": "single_gap_mean",
+        "lower": "single_gap_ci_lower",
+        "upper": "single_gap_ci_upper",
+        "ytitle": "Relative gap, single relaxation",
+        "title": "Relative optimality gap of the relaxed optimum (single relaxation, mean over constraints)",
+        "slug": "single_gap",
+        "optimum_key": "",
+        "count_col": "single_gap_n_runs",
+    },
+    "single_hv": {
+        "mean": "single_hv_mean",
+        "lower": "single_hv_ci_lower",
+        "upper": "single_hv_ci_upper",
+        "ytitle": "Hypervolume, single relaxation",
+        "title": "Shadow-front hypervolume (single relaxation, mean over constraints)",
+        "slug": "single_hv",
+        "optimum_key": "",
+        "count_col": "single_hv_n_runs",
+    },
 }
 
 

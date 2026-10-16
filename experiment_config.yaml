@@ -7,6 +7,8 @@ summary_stats_script: "scripts/summary_statistics.py"
 thresholds_script: "scripts/compute_thresholds.py"
 plot_script: "scripts/plot_summary_figures.py"
 mode_table_script: "scripts/mode_comparison_table.py"
+scenario_script: "scripts/scenario_metrics.py"
+supplement_script: "scripts/generate_supplement_tex.py"
 result_extension: "parquet"
 base_seed: 28012026
 
@@ -255,6 +257,8 @@ plotting:
       { color: "#0072B2", linestyle: "--", linewidth: 2.0, label: "Relaxed" }
     ranking:
       { color: "#E69F00", linestyle: ":", linewidth: 2.2, label: "Ranking" }
+    hypervolume:
+      { color: "#009E73", linestyle: "-.", linewidth: 2.0, label: "Hypervolume" }
 
   optimum_line:
     color: "#D55E00"

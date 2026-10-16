@@ -13,13 +13,27 @@ EXT = config["result_extension"]
 PLOT_SCRIPT = config["plot_script"]
 MODE_TABLE_SCRIPT = config["mode_table_script"]
 
-METRIC_KEYS = ["best_so_far", "hv", "shadow_gen_best", "shadow_best_so_far", "shadow_price_diff"]
+SCENARIO_SCRIPT = config["scenario_script"]
+SUPPLEMENT_SCRIPT = config["supplement_script"]
+
+# Metrics computed by summary_statistics.py (per-generation summary + per-run final values)
+SUMMARY_METRIC_KEYS = ["best_so_far", "hv", "shadow_gen_best", "shadow_best_so_far", "shadow_price_diff"]
+# Metrics computed by scenario_metrics.py (the other three cells of the 2x2 scenario grid)
+SCENARIO_METRIC_KEYS = ["joint_gap", "single_gap", "single_hv"]
+METRIC_KEYS = SUMMARY_METRIC_KEYS + SCENARIO_METRIC_KEYS
+# Figures collected in the supplementary material, in order
+SUPPLEMENT_METRIC_KEYS = ["best_so_far", "single_gap", "single_hv", "joint_gap", "hv"]
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
 CT_LEVELS = ["low", "med", "high"]
 
 wildcard_constraints:
     problem_name="(" + "|".join(SUMMARY_PROBLEMS) + ")",
-    metric_key="(" + "|".join(METRIC_KEYS) + ")"
+    metric_key="(" + "|".join(METRIC_KEYS) + ")",
+    mode="(" + "|".join(config["modes"]) + ")",
+    ctlevel="(" + "|".join(CT_LEVELS) + ")",
+    psize="[0-9]+",
+    n_generations="[0-9]+",
+    n_runs="[0-9]+"
 
 
 def thresholds_for_level(prob: dict, level: str) -> dict:
@@ -45,38 +59,42 @@ def param_combinations():
                         }
 
 
+def summary_stem(problem_name: str, mode: str, ct: str, psize) -> str:
+    return os.path.join(
+        RESULTS_DIR,
+        "summary",
+        f"{problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}",
+    )
+
+
+def metric_files(problem_name: str, mode: str, ct: str, psize, metric_key: str) -> tuple[str, str]:
+    """(per-generation summary, per-run final values) holding `metric_key`."""
+    stem = summary_stem(problem_name, mode, ct, psize)
+    if metric_key in SCENARIO_METRIC_KEYS:
+        return f"{stem}_scenario_summary.{EXT}", f"{stem}_scenario_per_run.{EXT}"
+    return f"{stem}_summary.{EXT}", f"{stem}_per_run.{EXT}"
+
+
 def summary_inputs_and_meta(problem_name: str, metric_key: str):
-    # metric_key isn't needed for file paths, but keeps interface symmetric
     meta = []
     paths = []
     for psize in config["population_sizes"]:
         for ct in CT_LEVELS:
             for mode in config["modes"]:
-                path = os.path.join(
-                    RESULTS_DIR,
-                    "summary",
-                    f"{problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_summary.{EXT}",
-                )
+                path, _ = metric_files(problem_name, mode, ct, psize, metric_key)
                 paths.append(path)
                 meta.append({"path": path, "psize": psize, "ctlevel": ct, "mode": mode})
     return paths, meta
 
 
-def all_summary_inputs_and_meta():
+def all_summary_inputs_and_meta(metric_key: str):
     """All summary paths and metadata across all problems (for mode comparison tables)."""
     paths, meta = [], []
     for pname in SUMMARY_PROBLEMS:
         for psize in config["population_sizes"]:
             for ct in CT_LEVELS:
                 for mode in config["modes"]:
-                    summary_path = os.path.join(
-                        RESULTS_DIR, "summary",
-                        f"{pname}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_summary.{EXT}",
-                    )
-                    per_run_path = os.path.join(
-                        RESULTS_DIR, "summary",
-                        f"{pname}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}_per_run.{EXT}",
-                    )
+                    summary_path, per_run_path = metric_files(pname, mode, ct, psize, metric_key)
                     paths.extend([summary_path, per_run_path])
                     meta.append({
                         "path": summary_path,
@@ -125,6 +143,13 @@ rule all:
             for combo in param_combinations()
             if combo["problem_name"] in SUMMARY_PROBLEMS
         ] +
+        # scenario metrics (joint gap, single gap, single hypervolume)
+        [
+            summary_stem(combo['problem_name'], combo['mode'], combo['ct_level'], combo['population_size'])
+            + f"_scenario_summary.{EXT}"
+            for combo in param_combinations()
+            if combo["problem_name"] in SUMMARY_PROBLEMS
+        ] +
         # plots (one PDF per problem per metric)
         [
             os.path.join(
@@ -140,8 +165,8 @@ rule all:
             os.path.join(RESULTS_DIR, "tables", f"mode_comparison_{m}.tex")
             for m in METRIC_KEYS
         ] +
-        # appendix LaTeX
-        [os.path.join(RESULTS_DIR, "tables", "appendix_figures.tex")]
+        # supplementary material LaTeX (figure pages)
+        [os.path.join(RESULTS_DIR, "tables", "supplement_figures.tex")]
 
 
 rule generate_data:
@@ -244,6 +269,48 @@ rule summary_statistics:
     script:
         SUMMARY_STATS_SCRIPT
 
+rule scenario_metrics:
+    input:
+        thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
+        data=os.path.join(
+            RESULTS_DIR,
+            "data",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
+        ),
+        front=os.path.join(
+            RESULTS_DIR,
+            "fronts",
+            "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
+        )
+    output:
+        summary=os.path.join(
+            RESULTS_DIR,
+            "summary",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_scenario_summary." + EXT,
+        ),
+        per_run=os.path.join(
+            RESULTS_DIR,
+            "summary",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_scenario_per_run." + EXT,
+        ),
+        meta=os.path.join(
+            RESULTS_DIR,
+            "summary",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_scenario_meta.yaml",
+        )
+    log:
+        os.path.join(
+            RESULTS_DIR,
+            "log",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}_scenario.log"
+        )
+    params:
+        constraint_symbols=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["constraint_symbols"],
+        objective_symbol=lambda wc: PROBLEM_BY_NAME[wc.problem_name]["objective_symbol"],
+        ct_level=lambda wc: wc.ctlevel
+    script:
+        SCENARIO_SCRIPT
+
 rule plot_summary_figures:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
@@ -276,14 +343,14 @@ rule plot_summary_figures:
 
 rule mode_comparison_table:
     input:
-        summaries=lambda wc: all_summary_inputs_and_meta()[0],
+        summaries=lambda wc: all_summary_inputs_and_meta(wc.metric_key)[0],
     output:
         parquet=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.parquet"),
         latex=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.tex"),
         stats_parquet=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}_stats.parquet"),
         stats_latex=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}_stats.tex"),
     params:
-        summaries_meta=lambda wc: all_summary_inputs_and_meta()[1],
+        summaries_meta=lambda wc: all_summary_inputs_and_meta(wc.metric_key)[1],
         modes=lambda wc: config["modes"],
         population_sizes=lambda wc: config["population_sizes"],
         ct_levels=lambda wc: CT_LEVELS,
@@ -294,7 +361,7 @@ rule mode_comparison_table:
     script:
         MODE_TABLE_SCRIPT
 
-rule generate_appendix:
+rule generate_supplement:
     input:
         figures=[
             os.path.join(
@@ -302,9 +369,9 @@ rule generate_appendix:
                 f"{p}__{m}_gen{config['n_generations']}_runs{config['n_runs']}_psizes{'-'.join(map(str, config['population_sizes']))}.pdf",
             )
             for p in SUMMARY_PROBLEMS
-            for m in ["best_so_far", "hv", "shadow_price_diff"]
+            for m in SUPPLEMENT_METRIC_KEYS
         ]
     output:
-        os.path.join(RESULTS_DIR, "tables", "appendix_figures.tex")
-    run:
-        shell("uv run python scripts/generate_appendix_tex.py > {output}")
+        os.path.join(RESULTS_DIR, "tables", "supplement_figures.tex")
+    shell:
+        "uv run python {SUPPLEMENT_SCRIPT} > {output}"
