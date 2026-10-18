@@ -14,13 +14,15 @@ PLOT_SCRIPT = config["plot_script"]
 MODE_TABLE_SCRIPT = config["mode_table_script"]
 
 SCENARIO_SCRIPT = config["scenario_script"]
+REFERENCE_SCRIPT = config["reference_script"]
 SUPPLEMENT_SCRIPT = config["supplement_script"]
 
 # Metrics computed by summary_statistics.py (per-generation summary + per-run final values)
 SUMMARY_METRIC_KEYS = ["best_so_far", "hv", "shadow_gen_best", "shadow_best_so_far", "shadow_price_diff"]
 # Metrics computed by scenario_metrics.py (the other three cells of the 2x2 scenario grid)
 SCENARIO_METRIC_KEYS = ["joint_gap", "single_gap", "single_hv"]
-METRIC_KEYS = SUMMARY_METRIC_KEYS + SCENARIO_METRIC_KEYS
+# Metrics with figures and comparison tables (one per cell of the scenario grid + optimizer performance)
+METRIC_KEYS = ["best_so_far", "hv"] + SCENARIO_METRIC_KEYS
 # Figures collected in the supplementary material, in order
 SUPPLEMENT_METRIC_KEYS = ["best_so_far", "single_gap", "single_hv", "joint_gap", "hv"]
 PROBLEM_BY_NAME = {p["name"]: p for p in config["problems"]}
@@ -133,6 +135,10 @@ rule all:
                 RESULTS_DIR, "thresholds", f"{p['name']}.yaml"
             ) for p in config["problems"]
         ] +
+        # Best-known reference optima for every relaxation
+        [
+            os.path.join(RESULTS_DIR, "reference", f"{p}.yaml") for p in SUMMARY_PROBLEMS
+        ] +
         # summary statistics
         [
             os.path.join(
@@ -208,13 +214,6 @@ rule generate_pareto_front:
         FRONT_GEN_SCRIPT
 
 rule compute_constraint_thresholds:
-    input:
-        front=os.path.join(
-            RESULTS_DIR,
-            "fronts",
-            "{problem_name}_gen" + str(config["n_generations_front"]) +
-            "_psize" + str(config["population_size_front"]) + "." + EXT,
-        )
     output:
         os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml")
     params:
@@ -228,15 +227,11 @@ rule compute_constraint_thresholds:
 rule summary_statistics:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
+        reference=os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml"),
         data=os.path.join(
             RESULTS_DIR,
             "data",
             "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
-        ),
-        front=os.path.join(
-            RESULTS_DIR,
-            "fronts",
-            "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
         )
     output:
         os.path.join(
@@ -269,18 +264,45 @@ rule summary_statistics:
     script:
         SUMMARY_STATS_SCRIPT
 
-rule scenario_metrics:
+rule compute_reference_optima:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
-        data=os.path.join(
-            RESULTS_DIR,
-            "data",
-            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
-        ),
         front=os.path.join(
             RESULTS_DIR,
             "fronts",
             "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
+        ),
+        data=lambda wc: [
+            os.path.join(
+                RESULTS_DIR,
+                "data",
+                f"{wc.problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{max(config['population_sizes'])}.{EXT}",
+            )
+            for mode in config["modes"]
+            for ct in CT_LEVELS
+        ]
+    output:
+        os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml")
+    log:
+        os.path.join(RESULTS_DIR, "log", "{problem_name}_reference.log")
+    params:
+        problem=lambda wc: PROBLEM_BY_NAME[wc.problem_name],
+        n_run_starts=lambda wc: config["reference_n_run_starts"],
+        n_random_starts=lambda wc: config["reference_n_random_starts"],
+        maxiter=lambda wc: config["reference_maxiter"],
+        feasibility_tol=lambda wc: config["reference_feasibility_tol"],
+        seed=lambda wc: config["base_seed"],
+    script:
+        REFERENCE_SCRIPT
+
+rule scenario_metrics:
+    input:
+        thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
+        reference=os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml"),
+        data=os.path.join(
+            RESULTS_DIR,
+            "data",
+            "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
         )
     output:
         summary=os.path.join(
@@ -314,6 +336,7 @@ rule scenario_metrics:
 rule plot_summary_figures:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
+        reference=os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml"),
         summaries=lambda wc: summary_inputs_and_meta(wc.problem_name, wc.metric_key)[0],
     output:
         os.path.join(
@@ -344,6 +367,7 @@ rule plot_summary_figures:
 rule mode_comparison_table:
     input:
         summaries=lambda wc: all_summary_inputs_and_meta(wc.metric_key)[0],
+        references=[os.path.join(RESULTS_DIR, "reference", f"{p}.yaml") for p in SUMMARY_PROBLEMS],
     output:
         parquet=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.parquet"),
         latex=os.path.join(RESULTS_DIR, "tables", "mode_comparison_{metric_key}.tex"),
@@ -357,7 +381,7 @@ rule mode_comparison_table:
         problems=lambda wc: SUMMARY_PROBLEMS,
         n_generations=lambda wc: config["n_generations"],
         metric_key=lambda wc: wc.metric_key,
-        thresholds_dir=os.path.join(RESULTS_DIR, "thresholds"),
+        reference_dir=os.path.join(RESULTS_DIR, "reference"),
     script:
         MODE_TABLE_SCRIPT
 

@@ -16,7 +16,7 @@ from desdeo.tools.non_dominated_sorting import non_dominated_merge
 
 def snakemake_main() -> None:  # noqa: D103
     data_path = str(snakemake.input["data"])
-    front_path = str(snakemake.input["front"])
+    reference_path = str(snakemake.input["reference"])
     out_path = str(snakemake.output[0])
     out_meta_path = str(snakemake.output[1])
     out_per_run_path = str(snakemake.output[2])
@@ -47,9 +47,10 @@ def snakemake_main() -> None:  # noqa: D103
     eps_percent = float(snakemake.config["hv_eps_percent"])
 
     df = pl.read_parquet(data_path)
-    df_front = pl.read_parquet(front_path)
+    with open(reference_path, encoding="utf-8") as f:  # noqa: PTH123
+        reference_doc = yaml.safe_load(f)
 
-    print(f"[{job_label}] Loaded {df.height} rows, {df_front.height} front points", flush=True)
+    print(f"[{job_label}] Loaded {df.height} rows", flush=True)
 
     # Best feasible objective
     feasible_expr = pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols])
@@ -177,25 +178,20 @@ def snakemake_main() -> None:  # noqa: D103
 
     print(f"[{job_label}] Shadow-price summaries done", flush=True)
 
-    # Relaxation-gain HV box (with fallback to the original shadow-feasible-front box):
+    # Relaxation-gain HV box:
     #   - objective axis: [f*_relaxed, f*_strict]
-    #       f*_strict  = best objective on reference front with all c <= 0
-    #       f*_relaxed = best objective on reference front with all c <= threshold
+    #       f*_strict  = known optimum (experiment config)
+    #       f*_relaxed = best-known threshold optimum (compute_reference_optima.py)
     #   - each constraint axis: [0, threshold_c]
     # Strict-feasible coordinates (c <= 0) and below-reference objective (f < f*_relaxed)
     # clip to the box floor, giving full width on the corresponding axis. Points outside
     # the box (c > threshold or f > f*_strict) are dropped.
-    # Fallback to the original box when no strict-feasible reference set exists or
-    # relaxation provides no objective gain (f*_strict <= f*_relaxed).
-    joint_threshold_expr = pl.all_horizontal([pl.col(c) <= float(thresholds.get(c, 0.0)) for c in c_cols])
-    shadow_feasible = df_front.filter(joint_threshold_expr).unique()
-    if shadow_feasible.height == 0:
-        raise ValueError("No shadow-feasible points on the reference front.")
-
-    strict_feasible = df_front.filter(pl.all_horizontal([pl.col(c) <= 0.0 for c in c_cols]))
-    f_strict = float(strict_feasible[f_col].min()) if strict_feasible.height > 0 else None
-    f_relaxed = float(shadow_feasible[f_col].min())
-    use_relax_box = f_strict is not None and f_strict > f_relaxed
+    # When the relaxation provides no objective gain (f*_strict <= f*_relaxed), the
+    # hypervolume is undefined and reported as null.
+    f_strict = float(reference_doc["objective_optimum"])
+    f_relaxed = reference_doc["levels"][ct_level]["joint"]["f"]
+    ref_tol = float(thresholds_doc.get("eps", 1e-9))
+    use_relax_box = f_relaxed is not None and f_strict - float(f_relaxed) > ref_tol
 
     # Evidence-based dimension filtering: drop constraints with weak evidence
     evidence = thresholds_doc.get("evidence", {})
@@ -233,22 +229,13 @@ def snakemake_main() -> None:  # noqa: D103
         ref_full = np.ones(len(dim_cols))  # nadir on each axis; eps margin added below
         hv_box_kind = "relax"
     else:
-        # Fallback: shadow-feasible-front-based box (the original definition)
-        ideal_vals = np.array(shadow_feasible.select([pl.col(x).min().alias(x) for x in dim_cols]).row(0), dtype=float)
-        nadir_vals = np.array(shadow_feasible.select([pl.col(x).max().alias(x) for x in dim_cols]).row(0), dtype=float)
-        sf_ranges = nadir_vals - ideal_vals
-        for i in range(1, len(dim_cols)):
-            if sf_ranges[i] <= 1e-12 and active_mask[i]:
-                active_mask[i] = False
-                dropped_meta.setdefault(c_cols[i - 1], {"reason": "zero_range_on_shadow_front"})
-        range_full = np.where(sf_ranges > 0, sf_ranges, 1.0)
-        ref_full = np.empty(len(dim_cols))
-        for i, dname in enumerate(dim_cols):
-            if dname == f_col:
-                ref_full[i] = 1.0
-            else:
-                ref_full[i] = (float(thresholds[dname]) - ideal_vals[i]) / range_full[i]
-        hv_box_kind = "current_fallback"
+        # No reference gain: the hypervolume is undefined. Use a dummy unit box so the
+        # code below runs, and null out the values at the end.
+        ideal_vals = np.zeros(len(dim_cols))
+        ideal_vals[0] = f_strict
+        range_full = np.ones(len(dim_cols))
+        ref_full = np.ones(len(dim_cols))
+        hv_box_kind = "undefined_no_gain"
 
     # Expand the nadir reference outward by eps on every (active) axis so that solutions lying
     # exactly on a nadir boundary still contribute hypervolume (otherwise the strict and threshold
@@ -280,7 +267,7 @@ def snakemake_main() -> None:  # noqa: D103
         "hv_relax_anchors": {
             "f_strict": f_strict,
             "f_relaxed": f_relaxed,
-            "objective_gain": (f_strict - f_relaxed) if f_strict is not None else None,
+            "objective_gain": (f_strict - float(f_relaxed)) if f_relaxed is not None else None,
         },
     }
 
@@ -352,6 +339,8 @@ def snakemake_main() -> None:  # noqa: D103
     print(f"[{job_label}] HV loop done", flush=True)
 
     hv_df = pl.DataFrame(hv_rows, schema=["run", "generation", "hv"], orient="row").sort(["run", "generation"])
+    if hv_box_kind == "undefined_no_gain":
+        hv_df = hv_df.with_columns(pl.lit(None, dtype=pl.Float64).alias("hv"))
 
     hv_summary = (
         hv_df.group_by("generation")

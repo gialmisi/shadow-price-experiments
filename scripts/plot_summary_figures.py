@@ -121,19 +121,13 @@ def _get_optimum(doc: dict, metric_spec: dict[str, str], ctlevel: str) -> float 
         return None if v is None else float(v)
 
     if key == "objective_shadow_optima":
-        d = doc.get("objective_shadow_optima")
-        if not isinstance(d, dict):
-            return None
-        v = d.get(ctlevel, None)
+        v = doc["levels"][ctlevel]["joint"]["f"]
         return None if v is None else float(v)
 
     if key == "true_shadow_price":
         f_opt = doc.get("objective_optimum")
-        d = doc.get("objective_shadow_optima")
-        if f_opt is None or not isinstance(d, dict):
-            return None
-        shadow_opt = d.get(ctlevel, None)
-        if shadow_opt is None:
+        shadow_opt = doc["levels"][ctlevel]["joint"]["f"]
+        if f_opt is None or shadow_opt is None:
             return None
         return float(f_opt) - float(shadow_opt)
 
@@ -143,7 +137,7 @@ def _get_optimum(doc: dict, metric_spec: dict[str, str], ctlevel: str) -> float 
 def snakemake_main() -> None:
     out_path = str(snakemake.output[0])
 
-    thresholds_yaml = str(snakemake.input["thresholds"])
+    thresholds_yaml = str(snakemake.input["reference"])  # holds objective_optimum and the relaxed optima
     # Keep for Snakemake tracking:
     summary_paths = list(map(str, snakemake.input["summaries"]))
 

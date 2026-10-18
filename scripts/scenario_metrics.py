@@ -22,7 +22,7 @@ cells from the same data, without re-running any experiment:
                   over the contributing constraints.
 
 Reference values: ``f*(0)`` is the known optimum from the experiment config; the relaxed
-optima are read from the NSGA-III reference front. A constraint contributes to the single
+optima are the best-known values computed by ``compute_reference_optima.py``. A constraint contributes to the single
 metrics only if its threshold is positive and its single gain exceeds the tolerance ``eps``
 of the thresholds YAML. Problems without any contributing constraint, or without a positive
 joint gain, get null values (shown as dashes in the tables).
@@ -138,7 +138,7 @@ def _summarize(df: pl.DataFrame, col: str) -> pl.DataFrame:
 
 def snakemake_main() -> None:  # noqa: D103
     data_path = str(snakemake.input["data"])
-    front_path = str(snakemake.input["front"])
+    reference_path = str(snakemake.input["reference"])
     thresholds_path = str(snakemake.input["thresholds"])
     out_summary = str(snakemake.output["summary"])
     out_per_run = str(snakemake.output["per_run"])
@@ -162,26 +162,23 @@ def snakemake_main() -> None:  # noqa: D103
     tol = float(thr_doc.get("eps", 1e-9))
     f_col = f"{objective_symbol}_min"
 
-    # Reference optima from the reference front
-    front = pl.read_parquet(front_path).select([f_col, *constraint_symbols]).drop_nulls()
-    joint_mask_front = pl.all_horizontal([pl.col(c) <= thresholds[c] for c in constraint_symbols])
-    joint_front = front.filter(joint_mask_front)
-    f_joint = float(joint_front[f_col].min()) if joint_front.height > 0 else None
+    # Best-known reference optima
+    with open(reference_path, encoding="utf-8") as fh:  # noqa: PTH123
+        ref_doc = yaml.safe_load(fh)["levels"][ct_level]
+    f_joint = ref_doc["joint"]["f"]
     gain_joint = None if f_joint is None else f_strict - f_joint
     joint_ok = gain_joint is not None and gain_joint > tol
 
     single_ref: dict[str, dict] = {}
     for j in constraint_symbols:
-        mask_j = pl.all_horizontal([pl.col(c) <= (thresholds[c] if c == j else 0.0) for c in constraint_symbols])
-        cand = front.filter(mask_j)
-        f_j = float(cand[f_col].min()) if cand.height > 0 else None
+        f_j = ref_doc["single"][j]["f"]
         gain_j = None if f_j is None else f_strict - f_j
         contributes = thresholds[j] > 0.0 and gain_j is not None and gain_j > tol
         single_ref[j] = {
             "threshold": thresholds[j],
             "f_relaxed": f_j,
             "gain": gain_j,
-            "n_front_points": int(cand.height),
+            "source": ref_doc["single"][j].get("source"),
             "contributes": bool(contributes),
         }
     contributing = [j for j in constraint_symbols if single_ref[j]["contributes"]]
@@ -263,7 +260,7 @@ def snakemake_main() -> None:  # noqa: D103
             "f_relaxed": f_joint,
             "gain": gain_joint,
             "contributes": bool(joint_ok),
-            "n_front_points": int(joint_front.height),
+            "source": ref_doc["joint"].get("source"),
         },
         "single": single_ref,
         "contributing_constraints": contributing,

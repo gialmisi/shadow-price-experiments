@@ -236,15 +236,14 @@ def snakemake_main() -> None:  # noqa: D103
     # Load true shadow prices from thresholds YAMLs (for error computation)
     true_shadow_price: dict[tuple[str, str], float] = {}
     if closer_to_zero:
-        thresholds_dir = Path(str(snakemake.params.thresholds_dir))
+        reference_dir = Path(str(snakemake.params.reference_dir))
         for prob in problems:
-            path = thresholds_dir / f"{prob}.yaml"
+            path = reference_dir / f"{prob}.yaml"
             with open(path, encoding="utf-8") as fh:
                 doc = yaml.safe_load(fh)
             f_opt = doc.get("objective_optimum")
-            shadow_optima = doc.get("objective_shadow_optima", {})
             for ct in ct_levels:
-                s_opt = shadow_optima.get(ct)
+                s_opt = doc["levels"][ct]["joint"]["f"]
                 if f_opt is not None and s_opt is not None:
                     true_shadow_price[(prob, ct)] = float(f_opt) - float(s_opt)
 
