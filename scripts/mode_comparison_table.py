@@ -1,9 +1,12 @@
 r"""Produce mode-comparison tables with Wilcoxon signed-rank statistical testing.
 
 For each (problem, population_size, threshold_level) cell the table shows
-the final-generation metric mean for each mode (Baseline / Relaxed / Ranking).
-Values significantly better than Baseline (paired Wilcoxon, alpha=0.025 after
-Bonferroni correction) are set in \\textbf{bold}.
+the final-generation metric mean for each mode (Baseline / Relaxed / Ranking /
+Hypervolume). The winning modes of a cell are set in \\textbf{bold}: the mode with
+the best mean when it is significantly better than at least one other mode, together
+with any mode not significantly worse than it (six pairwise two-sided Wilcoxon tests,
+alpha=0.10 Bonferroni-corrected). For metrics in ``_REFERENCE_MODE`` the best runner-up
+among the remaining modes is \\underline{underlined}.
 
 A separate detailed statistical table reports W, p-value, rank-biserial r,
 and significance for each comparison.

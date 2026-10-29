@@ -163,30 +163,33 @@ def main() -> None:
     strict_opt = (STRICT_LINE, STRICT_LINE)  # best objective within the strict-feasible region
     thresh_opt = (THRESH_LINE, THRESH_LINE)  # best objective within the threshold-feasible box
 
+    # Thick lines with a white halo so that they stay visible over the filled contours in print.
+    halo = [pe.Stroke(linewidth=4.0, foreground="white"), pe.Normal()]
+
     def ref_lines(ax: plt.Axes) -> None:
-        ax.axvline(STRICT_LINE, color="black", ls="--", lw=0.9)
-        ax.axhline(STRICT_LINE, color="black", ls="--", lw=0.9)
-        ax.axvline(THRESH_LINE, color="red", ls=":", lw=1.1)
-        ax.axhline(THRESH_LINE, color="red", ls=":", lw=1.1)
+        for draw in (ax.axvline, ax.axhline):
+            draw(STRICT_LINE, color="black", ls="--", lw=2.0, path_effects=halo, zorder=4)
+            draw(THRESH_LINE, color="red", ls=":", lw=2.4, path_effects=halo, zorder=4)
         ax.set_xlim(0.0, 1.0)
         ax.set_ylim(0.0, 1.0)
         ax.set_xlabel("$c_1$")
 
     feas_handles = [
-        plt.Line2D([], [], marker="o", ls="", mfc=s["color"], mec="black", label=s["label"])
+        plt.Line2D([], [], marker="o", ls="", ms=10, mfc=s["color"], mec="black", label=s["label"])
         for s in _FEAS_STYLE.values()
     ]
     star_handles = [
-        plt.Line2D([], [], marker="*", ls="", mfc="gold", mec="black", label="strict optimum"),
-        plt.Line2D([], [], marker="*", ls="", mfc="magenta", mec="black", label="threshold optimum"),
+        plt.Line2D([], [], marker="*", ls="", ms=16, mfc="gold", mec="black", label="strict optimum"),
+        plt.Line2D([], [], marker="*", ls="", ms=16, mfc="magenta", mec="black", label="threshold optimum"),
     ]
     line_handles = [
-        plt.Line2D([], [], color="black", ls="--", label="strict-feasibility boundary"),
-        plt.Line2D([], [], color="red", ls=":", label="relaxation threshold"),
+        plt.Line2D([], [], color="black", ls="--", lw=2.0, label="strict-feasibility boundary"),
+        plt.Line2D([], [], color="red", ls=":", lw=2.4, label="relaxation threshold"),
     ]
 
     n_modes = len(modes)
-    fig = plt.figure(figsize=(5.2 * n_modes, 9.9))
+    plt.rcParams.update({"font.size": 14})
+    fig = plt.figure(figsize=(4.0 * n_modes, 10.2))
     top_sf, bot_sf = fig.subfigures(2, 1, hspace=0.03)
 
     # Objective field row.
@@ -205,7 +208,7 @@ def main() -> None:
                 (sc1[k], sc2[k]),
                 ha="left",
                 va="bottom",
-                fontsize=9,
+                fontsize=11,
                 fontweight="bold",
                 zorder=7,
                 path_effects=[pe.withStroke(linewidth=2.2, foreground="white")],
@@ -215,21 +218,9 @@ def main() -> None:
         ref_lines(ax)
         ax.set_title(f"{m.capitalize()} mode")
     ax_top[0].set_ylabel("$c_2$")
-    cb1 = top_sf.colorbar(cf_obj, ax=list(ax_top), shrink=0.7, pad=0.02, anchor=(0.0, 1.0), panchor=(0.0, 1.0))
+    cb1 = top_sf.colorbar(cf_obj, ax=list(ax_top), pad=0.02)
     cb1.set_label("objective $f$ (0 = best)")
     cb1.set_ticks(np.linspace(0.0, 1.0, 6))
-    cpos = cb1.ax.get_position()
-    top_sf.legend(
-        handles=feas_handles + star_handles + line_handles,
-        loc="upper center",
-        bbox_to_anchor=(cpos.x0 + cpos.width / 2.0, cpos.y0 - 0.03),
-        bbox_transform=top_sf.transSubfigure,
-        fontsize=7,
-        framealpha=0.92,
-        ncol=1,
-        handletextpad=0.4,
-        borderaxespad=0.0,
-    )
     top_sf.suptitle("Objective field", fontweight="bold")
 
     # Ranking field row.
@@ -245,10 +236,19 @@ def main() -> None:
         ref_lines(ax_bot[i])
         ax_bot[i].set_title(f"{m.capitalize()} mode")
     ax_bot[0].set_ylabel("$c_2$")
-    cb2 = bot_sf.colorbar(cf_rank, ax=list(ax_bot), shrink=0.7, pad=0.02, anchor=(0.0, 1.0), panchor=(0.0, 1.0))
+    cb2 = bot_sf.colorbar(cf_rank, ax=list(ax_bot), pad=0.02)
     cb2.set_label("ranking field (normalized rank, 0 = best)")
     cb2.set_ticks(np.linspace(0.0, 1.0, 6))
     bot_sf.suptitle("Ranking field", fontweight="bold")
+    fig.legend(
+        handles=feas_handles + star_handles + line_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.0),
+        ncol=4,
+        fontsize=14,
+        framealpha=0.92,
+        handletextpad=0.4,
+    )
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
