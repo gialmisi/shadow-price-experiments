@@ -16,6 +16,9 @@ MODE_TABLE_SCRIPT = config["mode_table_script"]
 SCENARIO_SCRIPT = config["scenario_script"]
 REFERENCE_SCRIPT = config["reference_script"]
 SUPPLEMENT_SCRIPT = config["supplement_script"]
+# Rebuild tables and figures from the derived data (thresholds, references, summaries) alone,
+# without the run data and fronts: snakemake --config from_summaries=true
+FROM_SUMMARIES = bool(config["from_summaries"])
 
 # Metrics computed by summary_statistics.py (per-generation summary + per-run final values)
 SUMMARY_METRIC_KEYS = ["best_so_far", "hv", "shadow_gen_best", "shadow_best_so_far", "shadow_price_diff"]
@@ -112,23 +115,23 @@ def all_summary_inputs_and_meta(metric_key: str):
 rule all:
     input:
         # experiment data
-        [
+        ([] if FROM_SUMMARIES else [
         os.path.join(
                 RESULTS_DIR,
                 "data",
                 f"{combo["problem_name"]}_{combo['mode']}_gen{config['n_generations']}_runs{config['n_runs']}_ct{combo['ct_level']}_psize{combo['population_size']}.{EXT}",
             )
             for combo in param_combinations()
-        ] +
+        ]) +
         # Pareto front data
-        [
+        ([] if FROM_SUMMARIES else [
         os.path.join(
                 RESULTS_DIR,
                 "fronts",
                 f"{p["name"]}_gen{config['n_generations_front']}_psize{config['population_size_front']}.{EXT}",
             )
             for p in config["problems"]
-        ] +
+        ]) +
         # Compute constraint thresholds
         [
             os.path.join(
@@ -172,7 +175,9 @@ rule all:
             for m in METRIC_KEYS
         ] +
         # supplementary material LaTeX (figure pages)
-        [os.path.join(RESULTS_DIR, "tables", "supplement_figures.tex")]
+        [os.path.join(RESULTS_DIR, "tables", "supplement_figures.tex")] +
+        # illustrations (no experiment data)
+        [os.path.join(RESULTS_DIR, "figures", f"{f}_illustration.pdf") for f in ("hv", "mode")]
 
 
 rule generate_data:
@@ -228,7 +233,7 @@ rule summary_statistics:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
         reference=os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml"),
-        data=os.path.join(
+        data=[] if FROM_SUMMARIES else os.path.join(
             RESULTS_DIR,
             "data",
             "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
@@ -267,12 +272,12 @@ rule summary_statistics:
 rule compute_reference_optima:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
-        front=os.path.join(
+        front=[] if FROM_SUMMARIES else os.path.join(
             RESULTS_DIR,
             "fronts",
             "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
         ),
-        data=lambda wc: [
+        data=[] if FROM_SUMMARIES else lambda wc: [
             os.path.join(
                 RESULTS_DIR,
                 "data",
@@ -299,7 +304,7 @@ rule scenario_metrics:
     input:
         thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
         reference=os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml"),
-        data=os.path.join(
+        data=[] if FROM_SUMMARIES else os.path.join(
             RESULTS_DIR,
             "data",
             "{problem_name}_{mode}_gen{n_generations}_runs{n_runs}_ct{ctlevel}_psize{psize}." + EXT,
@@ -397,5 +402,19 @@ rule generate_supplement:
         ]
     output:
         os.path.join(RESULTS_DIR, "tables", "supplement_figures.tex")
+    script:
+        SUPPLEMENT_SCRIPT
+
+# The illustration rules call `python`, which must be the project's environment: run the
+# pipeline as `uv run snakemake ...` or with the environment activated.
+rule plot_hv_illustration:
+    output:
+        os.path.join(RESULTS_DIR, "figures", "hv_illustration.pdf")
     shell:
-        "uv run python {SUPPLEMENT_SCRIPT} > {output}"
+        "python scripts/plot_hv_schematic.py --output {output}"
+
+rule plot_mode_illustration:
+    output:
+        os.path.join(RESULTS_DIR, "figures", "mode_illustration.pdf")
+    shell:
+        "python scripts/plot_mode_illustration.py --output {output}"
