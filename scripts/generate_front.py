@@ -9,10 +9,9 @@ except ImportError:
     pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 from utils import PROBLEM_BUILDERS, set_operators
 
-from desdeo.emo import algorithms, selection, termination
+from desdeo.emo import algorithms, termination
 from desdeo.emo.hooks.archivers import NonDominatedArchive
 from desdeo.emo.options.algorithms import EMOOptions
-from desdeo.emo.operators.selection import ReferenceVectorOptions
 from desdeo.emo.options.generator import SeededHybridGeneratorOptions
 from desdeo.problem import Objective, Problem
 
@@ -83,10 +82,12 @@ def generate_front(
     nsga3_options = algorithms.nsga3_options()
     nsga3_options.template.seed = seed
 
-    # Crossover, mutation and repair: stated in the config, checked against the preset
-    set_operators(nsga3_options.template, operators)
-    nsga3_options.template.selection = selection.NSGA3SelectorOptions(
-        reference_vector_options=ReferenceVectorOptions(number_of_vectors=population_size)
+    # Crossover, mutation, repair and the selector's reference vectors: stated in the config, checked
+    # against the preset
+    set_operators(
+        nsga3_options.template,
+        operators,
+        fixed={"selection": {"reference_vector_options": {"number_of_vectors": population_size}}},
     )
 
     # Seeded hybrid initial population

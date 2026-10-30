@@ -32,15 +32,35 @@ PROBLEM_BUILDERS: dict[str, Callable[[], Problem]] = {
 OPERATOR_FIELDS = ("crossover", "mutation", "repair", "mate_selection")
 
 
+def _flatten(options: dict, prefix: str = "") -> dict[str, Any]:
+    """Nested options as {"a.b": value}, so that nested option models are compared option by option."""
+    flat = {}
+    for key, value in options.items():
+        if isinstance(value, dict) and value:
+            flat.update(_flatten(value, f"{prefix}{key}."))
+        else:
+            flat[f"{prefix}{key}"] = value
+    return flat
+
+
+def _merge(base: dict, update: dict) -> dict:
+    """`base` with the (possibly nested) values of `update`."""
+    merged = dict(base)
+    for key, value in update.items():
+        merged[key] = _merge(base[key], value) if isinstance(value, dict) and isinstance(base.get(key), dict) else value
+    return merged
+
+
 def set_operators(template: Any, operators: dict[str, dict], fixed: dict[str, dict] | None = None) -> None:
     """Set the template's operators from the config, and stop if they differ from the preset.
 
     `template` is the template of a DESDEO preset (e.g. `nsga2_options().template`), `operators` the
-    config's operator block. The config must state every option of every operator the preset sets,
-    and each value must equal the preset's, so that the config documents exactly what runs and a
-    changed preset (e.g. after a DESDEO upgrade) cannot change the experiments silently. `fixed`
-    holds options set by the experiment rather than the config (the tournament's winner_size);
-    they are excluded from the comparison.
+    config's operator block (it may also hold the selector, e.g. NSGA-III's reference vectors). The
+    config must state every option of every operator the preset sets, and each value must equal the
+    preset's, so that the config documents exactly what runs and a changed preset (e.g. after a
+    DESDEO upgrade) cannot change the experiments silently. `fixed` holds options set by the
+    experiment rather than the config (the tournament's winner_size, the number of reference
+    vectors), nested like the options; they are excluded from the comparison.
     """
     fixed = fixed or {}
     problems = [
@@ -53,13 +73,13 @@ def set_operators(template: Any, operators: dict[str, dict], fixed: dict[str, di
         if preset is None:
             problems.append(f"{field}: stated in the config but not set by the preset")
             continue
-        preset_values = preset.model_dump()
-        own = fixed.get(field, {})
-        missing = set(preset_values) - set(stated) - set(own)
+        preset_values = _flatten(preset.model_dump())
+        own = _flatten(fixed.get(field, {}))
+        missing = set(preset_values) - set(_flatten(stated)) - set(own)
         if missing:
             problems.append(f"{field}: options not stated in the config: {sorted(missing)}")
-        built = type(preset).model_validate({**stated, **own})
-        for key, value in built.model_dump().items():
+        built = type(preset).model_validate(_merge(stated, fixed.get(field, {})))
+        for key, value in _flatten(built.model_dump()).items():
             if key not in own and value != preset_values.get(key):
                 problems.append(f"{field}.{key}: config {value!r}, preset {preset_values.get(key)!r}")
         setattr(template, field, built)
