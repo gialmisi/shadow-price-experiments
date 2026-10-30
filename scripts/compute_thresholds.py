@@ -1,9 +1,9 @@
 """Emit per-problem threshold YAML from hand-picked values in the experiment config.
 
 Constraint thresholds (low/med/high) are read directly from `manual_thresholds`
-on each problem entry in experiment_config.yaml (rationale: see
-results/figures/threshold_picker/hand_picked.md). The reference optima for the
-relaxed problems are computed separately by scripts/compute_reference_optima.py.
+on each problem entry in experiment_config.yaml; they were chosen from the contour
+plots of scripts/plot_threshold_picker.py. The reference optima for the relaxed
+problems are computed separately by scripts/compute_reference_optima.py.
 """
 
 from typing import Any
@@ -36,7 +36,7 @@ def snakemake_main() -> None:
     if manual is None:
         raise KeyError(
             f"Problem '{problem_name}' missing 'manual_thresholds' in experiment_config.yaml. "
-            "Hand-picked thresholds are required; see results/figures/threshold_picker/hand_picked.md."
+            "Hand-picked low/med/high thresholds are required for every constraint."
         )
     missing_levels = [lvl for lvl in LEVELS if lvl not in manual]
     if missing_levels:

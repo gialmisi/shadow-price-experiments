@@ -118,11 +118,10 @@ seed_flip_prob: 0.1
 # for several problems that computation produced values far outside the actual
 # image of the constraints in the reachable design space, which made the
 # constraint-relaxation experiments meaningless. The picked values were chosen
-# from the interactive contour plots produced by scripts/plot_threshold_picker.py;
-# rationale notes live in results/figures/threshold_picker/hand_picked.md.
-# scripts/compute_thresholds.py now reads these values straight from the config
-# (it still uses the reference front, but only to compute objective_shadow_optima
-# at each ct level, which downstream plotting/stats need).
+# from the interactive contour plots produced by scripts/plot_threshold_picker.py.
+# scripts/compute_thresholds.py reads these values straight from the config; the
+# reference front is used only by scripts/compute_reference_optima.py, for the
+# optima of the relaxed problems at each threshold level.
 #
 # threshold_improvement_percentages is kept for historical reference but is
 # no longer used.
