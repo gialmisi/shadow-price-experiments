@@ -11,6 +11,8 @@ scenario_script: "scripts/scenario_metrics.py"
 reference_script: "scripts/compute_reference_optima.py"
 supplement_script: "scripts/generate_supplement_tex.py"
 result_extension: "parquet"
+# true: rebuild the tables and figures from the derived data alone (see the Snakefile)
+from_summaries: false
 base_seed: 28012026
 
 # EA operators: the values of DESDEO's nsga2_options() (experiment_1.py) and nsga3_options()
