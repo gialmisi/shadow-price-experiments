@@ -83,7 +83,7 @@ hypervolume_eps: 0.01
 modes: ["baseline", "relaxed", "ranking", "hypervolume"]
 population_sizes: [12, 36, 60]
 n_generations: 200
-n_runs: 500
+n_runs: 100
 
 # Random samples for inactive constraint thresholds
 
