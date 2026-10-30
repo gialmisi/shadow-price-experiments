@@ -1,14 +1,20 @@
 """Generate the figure sections of the supplementary material.
 
-Reads experiment_config.yaml and emits one LaTeX section per metric, with one figure
-per problem, for the per-generation convergence plots produced by the pipeline. Output
-goes to stdout so it can be redirected to a .tex file that the manuscript's
-supplement.tex inputs::
+Emits one LaTeX section per metric, with one figure per problem, for the per-generation
+convergence plots produced by the pipeline; the manuscript's supplement.tex inputs it. Run by
+Snakemake (rule generate_supplement), it uses Snakemake's config, including --config and
+--configfile overrides, and writes the rule's output. Run directly, it reads
+experiment_config.yaml and prints to stdout::
 
     uv run python scripts/generate_supplement_tex.py > supplement_figures.tex
 """
 
 import yaml
+
+try:
+    from snakemake.script import snakemake  # snakemake <= 8.x
+except ImportError:
+    pass  # snakemake >= 9.x injects `snakemake` via the script preamble
 
 CONFIG_PATH = "experiment_config.yaml"
 
@@ -82,10 +88,7 @@ def _fig_label(problem: str, metric_key: str) -> str:
     return f"fig:supp_{problem}_{metric_key}"
 
 
-def main() -> None:
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-
+def main(cfg: dict) -> str:
     problems = cfg["summary_problems"]
     n_gen = cfg["n_generations"]
     n_runs = cfg["n_runs"]
@@ -113,8 +116,15 @@ def main() -> None:
         lines.append("\\FloatBarrier")
         lines.append("")
 
-    print("\n".join(lines))
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        snakemake  # noqa: B018
+    except NameError:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            print(main(yaml.safe_load(f)))
+    else:
+        with open(snakemake.output[0], "w", encoding="utf-8") as f:
+            f.write(main(snakemake.config) + "\n")
