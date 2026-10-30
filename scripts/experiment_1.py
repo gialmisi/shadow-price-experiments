@@ -9,19 +9,50 @@ try:
     from snakemake.script import snakemake  # snakemake <= 8.x
 except ImportError:
     pass  # snakemake >= 9.x injects `snakemake` via the script preamble
-from utils import PROBLEM_BUILDERS
+from utils import PROBLEM_BUILDERS, set_operators
 
 from desdeo.emo import (
     algorithms,
-    crossover,
     generator,
-    mutation,
-    scalar_selection,
     selection,
     termination,
 )
 from desdeo.emo.hooks.archivers import Archive
+from desdeo.emo.options.algorithms import EMOOptions
 from desdeo.problem import Problem
+
+
+def build_nsga2_options(
+    mode: str,
+    constraints: dict[str, float],
+    pop_size: int,
+    n_generations: int,
+    seed: int,
+    objective_symbol: str = "f_1",
+) -> EMOOptions:
+    """NSGA-II preset with the config's operators and the experiment's selector, generator and termination."""
+    nsga2_options = algorithms.nsga2_options()
+    nsga2_options.template.seed = seed
+
+    # Crossover, mutation, repair and mating tournament: stated in the config, checked against the preset
+    set_operators(
+        nsga2_options.template,
+        snakemake.config["experiment_operators"],
+        fixed={"mate_selection": {"winner_size": pop_size}},
+    )
+    nsga2_options.template.selection = selection.SingleObjectiveConstrainedRankingSelectorOptions(
+        target_objective_symbol=objective_symbol,
+        constraints=constraints,
+        population_size=pop_size,
+        mode=mode,
+        niching=str(snakemake.config["ranking_niching"]),
+        niching_k=int(snakemake.config["ranking_niching_k"]),
+        hv_eps=float(snakemake.config["hypervolume_eps"]),
+    )
+    nsga2_options.template.generator = generator.LHSGeneratorOptions(n_points=pop_size)
+    nsga2_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
+
+    return nsga2_options
 
 
 def run_nsga2_with_mode(
@@ -34,50 +65,14 @@ def run_nsga2_with_mode(
     objective_symbol: str = "f_1",
 ) -> Archive:
     """Run the NSGA-II style EA once for a given constraint-handling mode."""
-    nsga2_options = algorithms.nsga2_options()
-    nsga2_options.template.seed = seed
-
-    # Experiment-specific operator settings (with optional per-problem overrides)
-    prob_overrides = snakemake.config.get("problem_operator_overrides", {}).get(snakemake.wildcards.problem_name, {})
-    xover_dist = prob_overrides.get(
-        "experiment_xover_distribution",
-        snakemake.config.get("experiment_xover_distribution", snakemake.config["xover_distribution"]),
-    )
-    mut_dist = prob_overrides.get(
-        "experiment_distribution_index",
-        snakemake.config.get("experiment_distribution_index", snakemake.config["distribution_index"]),
-    )
-    mut_factor = float(
-        prob_overrides.get(
-            "experiment_mutation_probability_factor",
-            snakemake.config.get("experiment_mutation_probability_factor", 1),
-        )
-    )
-    mut_prob = min(1.0, mut_factor / len(problem.variables))
-
-    nsga2_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
-        xover_probability=snakemake.config["xover_probability"],
-        xover_distribution=xover_dist,
-    )
-    nsga2_options.template.mutation = mutation.BoundedPolynomialMutationOptions(
-        mutation_probability=mut_prob,
-        distribution_index=mut_dist,
-    )
-    nsga2_options.template.mate_selection = scalar_selection.TournamentSelectionOptions(
-        name="TournamentSelection",
-        tournament_size=snakemake.config["tournament_size"],
-        winner_size=pop_size,
-    )
-    nsga2_options.template.selection = selection.SingleObjectiveConstrainedRankingSelectorOptions(
-        target_objective_symbol=objective_symbol,
-        constraints=constraints,
-        population_size=pop_size,
+    nsga2_options = build_nsga2_options(
         mode=mode,
-        niching=str(snakemake.config.get("ranking_niching", "crowding")),
-        niching_k=int(snakemake.config.get("ranking_niching_k", 3)),
+        constraints=constraints,
+        pop_size=pop_size,
+        n_generations=n_generations,
+        seed=seed,
+        objective_symbol=objective_symbol,
     )
-    nsga2_options.template.generator = generator.LHSGeneratorOptions(n_points=pop_size)
-    nsga2_options.template.termination = termination.MaxGenerationsTerminatorOptions(max_generations=n_generations)
 
     solver, extras = algorithms.emo_constructor(emo_options=nsga2_options, problem=problem)
 
@@ -143,6 +138,17 @@ def snakemake_main():
         raise ValueError(f"Unknown problem '{problem_name}'. Add it to PROBLEM_BUILDERS in run_experiment.py.") from err
     problem = problem_fun()
 
+    # The options shared by all runs (each run's seed is in the 'seed' column). Built before the first
+    # run, so that a config that differs from the preset stops the job immediately.
+    ea_options = build_nsga2_options(
+        mode=mode,
+        constraints=constraints,
+        pop_size=pop_size,
+        n_generations=n_generations,
+        seed=base_seed,
+        objective_symbol=objective_symbol,
+    ).model_dump_json(exclude={"template": {"seed"}})
+
     solutions_results: pl.DataFrame | None = None
 
     for run_idx in range(n_runs):
@@ -183,6 +189,7 @@ def snakemake_main():
         out_path,
         metadata={
             "notes": parameters,
+            "ea_options": ea_options,
             "created_at": now_str,
         },
     )

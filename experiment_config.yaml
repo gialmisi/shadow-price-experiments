@@ -13,21 +13,57 @@ supplement_script: "scripts/generate_supplement_tex.py"
 result_extension: "parquet"
 base_seed: 28012026
 
-# NSGA3 options for front generation
+# EA operators: the values of DESDEO's nsga2_options() (experiment_1.py) and nsga3_options()
+# (generate_front.py) presets, written out so that every parameter is visible. The scripts set each
+# one explicitly and stop with an error if any differs from the installed DESDEO's preset.
+experiment_operators:  # NSGA-II
+  crossover:
+    name: "SimulatedBinaryCrossover"
+    pair_xover_probability: 0.9
+    xover_probability: 0.5  # per variable
+    uniform_xover_probability: 0.5
+    xover_distribution: 20  # eta_c
+    truncated: true
+    swap_uncrossed_variables: false
+  mutation:
+    name: "BoundedPolynomialMutation"
+    mutation_probability: null  # null: 1 / number of variables
+    distribution_index: 20  # eta_m
+  repair:
+    name: "ClipRepair"
+    lower_bounds: null  # null: the problem's bounds
+    upper_bounds: null
+  mate_selection:  # winner_size is set to the population size
+    name: "TournamentSelection"
+    tournament_size: 2
+    comparison: "fitness"
 
-xover_probability: 0.9
-xover_distribution: 20
-tournament_size: 2
-distribution_index: 20
+front_operators:  # NSGA-III
+  crossover:
+    name: "SimulatedBinaryCrossover"
+    pair_xover_probability: 1.0
+    xover_probability: 0.5  # per variable
+    uniform_xover_probability: 0.5
+    xover_distribution: 30  # eta_c
+    truncated: true
+    swap_uncrossed_variables: false
+  mutation:
+    name: "BoundedPolynomialMutation"
+    mutation_probability: null  # null: 1 / number of variables
+    distribution_index: 20  # eta_m
+  repair:
+    name: "ClipRepair"
+    lower_bounds: null  # null: the problem's bounds
+    upper_bounds: null
 
-# Experiment-specific operator settings (overrides for experiment_1.py only)
-experiment_xover_distribution: 3
-experiment_distribution_index: 1
-experiment_mutation_probability_factor: 1  # multiplier for 1/n_vars
+# Seed of the front generation (the NSGA-III preset's template seed; it also seeds the generator)
+front_seed: 42
 
 # Niching for the 'ranking' mode in experiment_1.py: "crowding", "knearest", or "kth"
 ranking_niching: "kth"
 ranking_niching_k: 3
+# Tolerance of the 'hypervolume' mode (the selector's hv_eps, its default value)
+hypervolume_eps: 0.01
 
 # Data generation
 

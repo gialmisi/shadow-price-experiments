@@ -7,10 +7,11 @@ try:
     from snakemake.script import snakemake  # snakemake <= 8.x
 except ImportError:
     pass  # snakemake >= 9.x injects `snakemake` via the script preamble
-from utils import PROBLEM_BUILDERS
+from utils import PROBLEM_BUILDERS, set_operators
 
-from desdeo.emo import algorithms, crossover, mutation, selection, termination
+from desdeo.emo import algorithms, selection, termination
 from desdeo.emo.hooks.archivers import NonDominatedArchive
+from desdeo.emo.options.algorithms import EMOOptions
 from desdeo.emo.operators.selection import ReferenceVectorOptions
 from desdeo.emo.options.generator import SeededHybridGeneratorOptions
 from desdeo.problem import Objective, Problem
@@ -70,26 +71,20 @@ def _seed_solution_from_config(problem: Problem, problem_name: str) -> pl.DataFr
 def generate_front(
     problem: Problem,
     seed_solution: pl.DataFrame,
-    xover_probability: float,
-    xover_distribution: float,
-    distribution_index: float,
+    operators: dict[str, dict],
+    seed: int,
     population_size: int,
     n_generations: int,
     perturb_fraction: float = 0.2,
     sigma: float = 0.02,
     flip_prob: float = 0.1,
-) -> NonDominatedArchive:
+) -> tuple[NonDominatedArchive, EMOOptions]:
     """Run NSGA-III to generate a (seeded) reference front for a given problem."""
     nsga3_options = algorithms.nsga3_options()
+    nsga3_options.template.seed = seed
 
-    nsga3_options.template.crossover = crossover.SimulatedBinaryCrossoverOptions(
-        xover_probability=xover_probability,
-        xover_distribution=xover_distribution,
-    )
-    nsga3_options.template.mutation = mutation.BoundedPolynomialMutationOptions(
-        mutation_probability=1.0 / len(problem.variables),
-        distribution_index=distribution_index,
-    )
+    # Crossover, mutation and repair: stated in the config, checked against the preset
+    set_operators(nsga3_options.template, operators)
     nsga3_options.template.selection = selection.NSGA3SelectorOptions(
         reference_vector_options=ReferenceVectorOptions(number_of_vectors=population_size)
     )
@@ -107,7 +102,7 @@ def generate_front(
 
     solver, extras = algorithms.emo_constructor(emo_options=nsga3_options, problem=problem)
     _ = solver()
-    return extras.archive
+    return extras.archive, nsga3_options
 
 
 def snakemake_main():
@@ -127,9 +122,8 @@ def snakemake_main():
 
     pop_size = snakemake.config["population_size_front"]
     n_generations = snakemake.config["n_generations_front"]
-    xover_distribution = snakemake.config["xover_distribution"]
-    xover_probability = snakemake.config["xover_probability"]
-    distribution_index = snakemake.config["distribution_index"]
+    operators = snakemake.config["front_operators"]
+    seed = int(snakemake.config["front_seed"])
     perturb_fraction = snakemake.config["seed_perturb_fraction"]
     sigma = snakemake.config["seed_sigma"]
     flip_prob = snakemake.config["seed_flip_prob"]
@@ -137,17 +131,16 @@ def snakemake_main():
     print(  # noqa: T201
         f"[{problem_name}] Starting front generation: "
         f"pop_size={pop_size}, generations={n_generations}, "
-        f"η_c={xover_distribution}, η_m={distribution_index}, "
+        f"rng seed={seed}, "
         f"seed σ={sigma}, perturb_frac={perturb_fraction}",
         flush=True,
     )
 
-    archive = generate_front(
+    archive, nsga3_options = generate_front(
         multi_problem,
         seed_solution=seed_solution,
-        xover_probability=xover_probability,
-        xover_distribution=xover_distribution,
-        distribution_index=distribution_index,
+        operators=operators,
+        seed=seed,
         population_size=pop_size,
         n_generations=n_generations,
         perturb_fraction=perturb_fraction,
@@ -158,7 +151,9 @@ def snakemake_main():
     n_archive = archive.solutions.height if archive.solutions is not None else 0
     print(f"[{problem_name}] Front generation done, archive size: {n_archive}", flush=True)  # noqa: T201
 
-    archive.solutions.write_parquet(out_path)
+    # The seed solution is in the config; the generator's DataFrame does not serialize to JSON.
+    ea_options = nsga3_options.model_dump_json(exclude={"template": {"generator": {"seed_solution"}}})
+    archive.solutions.write_parquet(out_path, metadata={"ea_options": ea_options})
     print(f"[{problem_name}] Written {out_path}", flush=True)  # noqa: T201
 
 

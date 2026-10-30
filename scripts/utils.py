@@ -1,6 +1,7 @@
 """General stuff useful generally."""
 
 from collections.abc import Callable
+from typing import Any
 
 from desdeo.problem import Problem
 from desdeo.problem.external.pymoo_provider import PymooProblemParams, create_pymoo_problem
@@ -26,3 +27,41 @@ PROBLEM_BUILDERS: dict[str, Callable[[], Problem]] = {
     "g10": lambda: create_pymoo_problem(PymooProblemParams(name="g10")),
     "g24": lambda: create_pymoo_problem(PymooProblemParams(name="g24")),
 }
+
+
+OPERATOR_FIELDS = ("crossover", "mutation", "repair", "mate_selection")
+
+
+def set_operators(template: Any, operators: dict[str, dict], fixed: dict[str, dict] | None = None) -> None:
+    """Set the template's operators from the config, and stop if they differ from the preset.
+
+    `template` is the template of a DESDEO preset (e.g. `nsga2_options().template`), `operators` the
+    config's operator block. The config must state every option of every operator the preset sets,
+    and each value must equal the preset's, so that the config documents exactly what runs and a
+    changed preset (e.g. after a DESDEO upgrade) cannot change the experiments silently. `fixed`
+    holds options set by the experiment rather than the config (the tournament's winner_size);
+    they are excluded from the comparison.
+    """
+    fixed = fixed or {}
+    problems = [
+        f"{field}: set by the preset but not stated in the config"
+        for field in OPERATOR_FIELDS
+        if getattr(template, field, None) is not None and field not in operators
+    ]
+    for field, stated in operators.items():
+        preset = getattr(template, field, None)
+        if preset is None:
+            problems.append(f"{field}: stated in the config but not set by the preset")
+            continue
+        preset_values = preset.model_dump()
+        own = fixed.get(field, {})
+        missing = set(preset_values) - set(stated) - set(own)
+        if missing:
+            problems.append(f"{field}: options not stated in the config: {sorted(missing)}")
+        built = type(preset).model_validate({**stated, **own})
+        for key, value in built.model_dump().items():
+            if key not in own and value != preset_values.get(key):
+                problems.append(f"{field}.{key}: config {value!r}, preset {preset_values.get(key)!r}")
+        setattr(template, field, built)
+    if problems:
+        raise ValueError("The config's operators differ from the DESDEO preset:\n  " + "\n  ".join(problems))
