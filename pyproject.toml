@@ -1,0 +1,24 @@
+[project]
+name = "shadow-price-experiments"
+version = "0.1.0"
+description = "Experiments for constraint-relaxation trade-offs as a by-product of evolutionary black-box optimization"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+  "desdeo",
+  "snakemake==9.27.0",
+  "numpy>=2.2",
+  "polars>=1.41,<2",  # DESDEO 2.8 is tested against polars 1.x
+  "scipy>=1.11.4",
+  "moocore>=0.3.2",
+  "matplotlib>=3.10",
+  "plotly>=6.0",
+  "pyyaml>=6.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# The commit that adds SingleObjectiveConstrainedRankingSelector. Replaced by desdeo==2.9.0 once released.
+desdeo = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector", rev = "bf3be05ae5028a7a648de693f9da89ecbb7c0744" }
