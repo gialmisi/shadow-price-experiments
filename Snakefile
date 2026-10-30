@@ -8,7 +8,6 @@ FRONT_GEN_SCRIPT = config["front_gen_script"]
 SUMMARY_PROBLEMS = config["summary_problems"]
 SUMMARY_STATS_SCRIPT = config["summary_stats_script"]
 THRESHOLDS_SCRIPT = config["thresholds_script"]
-THRESH_PCTS = config["threshold_improvement_percentages"]
 EXT = config["result_extension"]
 PLOT_SCRIPT = config["plot_script"]
 MODE_TABLE_SCRIPT = config["mode_table_script"]
@@ -223,7 +222,6 @@ rule compute_constraint_thresholds:
         os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml")
     params:
         problem=lambda wc: PROBLEM_BY_NAME[wc.problem_name],
-        percents=lambda wc: config["threshold_improvement_percentages"],
     log:
         os.path.join(RESULTS_DIR, "log", "{problem_name}_thresholds.log")
     script:

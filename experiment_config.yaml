@@ -122,10 +122,6 @@ seed_flip_prob: 0.1
 # scripts/compute_thresholds.py reads these values straight from the config; the
 # reference front is used only by scripts/compute_reference_optima.py, for the
 # optima of the relaxed problems at each threshold level.
-#
-# threshold_improvement_percentages is kept for historical reference but is
-# no longer used.
-threshold_improvement_percentages: [0.05, 0.10, 0.20] # low, med, high (deprecated)
 
 # Remember to update 'PROBLEM_BUILDERS' in utils.py when adding new problems!
 
