@@ -2,11 +2,12 @@ r"""Produce mode-comparison tables with Wilcoxon signed-rank statistical testing
 
 For each (problem, population_size, threshold_level) cell the table shows
 the final-generation metric mean for each mode (Baseline / Relaxed / Ranking /
-Hypervolume). The winning modes of a cell are set in \\textbf{bold}: the mode with
-the best mean when it is significantly better than at least one other mode, together
-with any mode not significantly worse than it (six pairwise two-sided Wilcoxon tests,
-alpha=0.10 Bonferroni-corrected). For metrics in ``_REFERENCE_MODE`` the best runner-up
-among the remaining modes is \\underline{underlined}.
+Hypervolume). The winning modes of a cell are set in \\textbf{bold}: the modes that no
+other mode is significantly better than, provided that some mode is significantly better
+than another (six pairwise two-sided Wilcoxon signed-rank tests, alpha=0.10
+Bonferroni-corrected; the better mode of a pair is the one its signed ranks favour). For
+metrics in ``_REFERENCE_MODE`` the same rule, applied to the remaining modes, marks the
+best runner-ups, \\underline{underlined}.
 
 A separate detailed statistical table reports W, p-value, rank-biserial r,
 and significance for each comparison.
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import yaml
-from scipy.stats import wilcoxon
+from scipy.stats import rankdata, wilcoxon
 
 try:
     from snakemake.script import snakemake  # snakemake <= 8.x
@@ -129,19 +130,22 @@ def _shared_exponent(values: list[float | None]) -> int:
     return floor(log10(max_abs))
 
 
-def _rank_biserial(x: np.ndarray, y: np.ndarray) -> float:
-    """Compute rank-biserial correlation as effect size for paired Wilcoxon.
+def _signed_rank_sums(d: np.ndarray) -> tuple[float, float]:
+    """Sums of the ranks of |d| over the positive and over the negative differences (W+, W-).
 
-    r = 1 - (2T) / (n(n+1)/2)  where T = W+ (sum of positive ranks).
+    Ties in |d| get their average rank, as in `scipy.stats.wilcoxon`.
     """
-    d = x - y
-    d = d[d != 0]
-    n = len(d)
-    if n == 0:
-        return 0.0
-    ranks = np.argsort(np.argsort(np.abs(d))) + 1
-    t_plus = float(ranks[d > 0].sum())
-    return 1.0 - (2.0 * t_plus) / (n * (n + 1) / 2.0)
+    ranks = rankdata(np.abs(d))
+    return float(ranks[d > 0].sum()), float(ranks[d < 0].sum())
+
+
+def _rank_biserial(w_plus: float, w_minus: float) -> float:
+    """Matched-pairs rank-biserial correlation, (W+ - W-) / (W+ + W-).
+
+    Positive when the positive differences dominate the ranks, in [-1, 1].
+    """
+    total = w_plus + w_minus
+    return (w_plus - w_minus) / total if total > 0 else 0.0
 
 
 def _wilcoxon_test(
@@ -190,19 +194,12 @@ def _wilcoxon_test(
             "n_nonzero": n_nonzero,
         }
 
-    # Effect size
-    r = _rank_biserial(
-        np.abs(baseline_vals) if closer_to_zero else alt_vals,
-        np.abs(alt_vals) if closer_to_zero else baseline_vals,
-    )
-
-    # Direction: which mode is better on average?
-    if closer_to_zero:
-        direction = "alt_better" if np.abs(alt_vals).mean() < np.abs(baseline_vals).mean() else "baseline_better"
-    elif higher_is_better:
-        direction = "alt_better" if alt_vals.mean() > baseline_vals.mean() else "baseline_better"
-    else:
-        direction = "alt_better" if alt_vals.mean() < baseline_vals.mean() else "baseline_better"
+    # Direction and effect size come from the signed ranks the test is based on, not from the
+    # means: a few outlying runs can reverse the means against the ranks, and the significance
+    # then belongs to the other direction. d > 0 means alt is better, so r > 0 means alt is better.
+    w_plus, w_minus = _signed_rank_sums(d_nonzero)
+    r = _rank_biserial(w_plus, w_minus)
+    direction = "alt_better" if w_plus > w_minus else "baseline_better"
 
     return {
         "W": float(stat),
@@ -297,10 +294,10 @@ def snakemake_main() -> None:  # noqa: D103
 
     # 2. Statistical testing: all pairwise comparisons, then determine the winner set per cell.
     #
-    # Winner rule: take the mode with the best mean. If it is significantly better than at
-    # least one other mode, it is the winner; additionally mark every mode that is NOT
-    # significantly worse than it (i.e. tied-for-best). If the best-mean mode is not
-    # significantly better than any other mode, there is no winner and nothing is marked.
+    # Winner rule: if at least one mode of the cell is significantly better than another, the
+    # winners are the modes that no other mode is significantly better than. Otherwise there is
+    # no winner and nothing is marked. The rule uses only the tests, not the means, so a mode is
+    # never marked when the test finds another one better.
     from itertools import combinations
 
     stats_rows: list[dict] = []
@@ -370,15 +367,11 @@ def snakemake_main() -> None:  # noqa: D103
                     pair_better[(b, a)] = result["significant"] and result["direction"] == "alt_better"
 
                 def _winner_set(candidates: list[str]) -> set[str]:
-                    """Best-mean mode if significantly better than some other candidate, plus ties."""
-                    if not candidates:
+                    """Candidates no other candidate beats, if any candidate beats another."""
+                    pairs = [(a, b) for a in candidates for b in candidates if a != b]
+                    if not any(pair_better.get(p, False) for p in pairs):
                         return set()
-                    best = (max if higher_is_better else min)(candidates, key=lambda m: cell_means[m])
-                    others = [m for m in candidates if m != best]
-                    best_beats = {m: pair_better.get((best, m), False) for m in others}
-                    if any(best_beats.values()):
-                        return {best} | {m for m in others if not best_beats[m]}
-                    return set()
+                    return {m for m in candidates if not any(pair_better.get((o, m), False) for o in candidates)}
 
                 valid_modes = [m for m in modes if cell_means[m] is not None]
                 winners[(prob, ps, ct)] = _winner_set(valid_modes)
@@ -424,8 +417,8 @@ def snakemake_main() -> None:  # noqa: D103
         ref_abbrev = _MODE_ABBREV.get(reference_mode, reference_mode)
         reference_note = (
             f" The {reference_mode} ({ref_abbrev}) mode optimizes this metric by construction, so it is"
-            " shown for reference:\\ \\underline{underline} marks the best-performing runner-up among the"
-            " remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
+            " shown for reference:\\ \\underline{underline} marks the best runner-up(s), by the same rule"
+            " applied to the remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
             " mode's outright win count."
         )
     lines.append(
@@ -433,10 +426,10 @@ def snakemake_main() -> None:  # noqa: D103
         + caption_metric
         + " by mode ("
         + abbrev_legend
-        + ").  \\textbf{Bold}: the winning mode(s), i.e. the best-mean mode when it is"
-        + " significantly better than at least one other mode, together with any mode not"
-        + " significantly worse than it; no mark when no significant winner exists"
-        + f" (paired two-sided Wilcoxon, $\\alpha={ALPHA}$, Bonferroni-corrected)."
+        + ").  \\textbf{Bold}: the winning mode(s), i.e. the modes that no other mode is"
+        + " significantly better than, provided that some mode is significantly better than"
+        + " another; no mark when no mode is"
+        + f" (paired two-sided Wilcoxon signed-rank tests, $\\alpha={ALPHA}$, Bonferroni-corrected)."
         + (" " + caption_note if caption_note else "")
         + reference_note
         + "}"
