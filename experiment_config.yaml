@@ -10,6 +10,7 @@ mode_table_script: "scripts/mode_comparison_table.py"
 scenario_script: "scripts/scenario_metrics.py"
 reference_script: "scripts/compute_reference_optima.py"
 supplement_script: "scripts/generate_supplement_tex.py"
+pooled_front_script: "scripts/pooled_front.py"
 result_extension: "parquet"
 # true: rebuild the tables and figures from the derived data alone (see the Snakefile)
 from_summaries: false

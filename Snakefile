@@ -15,6 +15,7 @@ MODE_TABLE_SCRIPT = config["mode_table_script"]
 SCENARIO_SCRIPT = config["scenario_script"]
 REFERENCE_SCRIPT = config["reference_script"]
 SUPPLEMENT_SCRIPT = config["supplement_script"]
+POOLED_FRONT_SCRIPT = config["pooled_front_script"]
 # Rebuild tables and figures from the derived data (thresholds, references, summaries) alone,
 # without the run data and fronts: snakemake --config from_summaries=true
 FROM_SUMMARIES = bool(config["from_summaries"])
@@ -61,6 +62,20 @@ def param_combinations():
                             "ct_level": level,
                             "population_size": pop_size,
                         }
+
+
+def run_data_files(problem_name: str) -> list[str]:
+    """The run files of one problem: every mode, threshold level and population size."""
+    return [
+        os.path.join(
+            RESULTS_DIR,
+            "data",
+            f"{problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}.{EXT}",
+        )
+        for mode in config["modes"]
+        for ct in CT_LEVELS
+        for psize in config["population_sizes"]
+    ]
 
 
 def summary_stem(problem_name: str, mode: str, ct: str, psize) -> str:
@@ -141,6 +156,12 @@ rule all:
         [
             os.path.join(RESULTS_DIR, "reference", f"{p}.yaml") for p in SUMMARY_PROBLEMS
         ] +
+        # Pooled shadow fronts (NSGA-III front, every run, the references) and their summaries
+        ([] if FROM_SUMMARIES else [
+            os.path.join(RESULTS_DIR, "fronts", f"{p}_{name}")
+            for p in SUMMARY_PROBLEMS
+            for name in (f"pooled.{EXT}", "pooled_summary.yaml")
+        ]) +
         # summary statistics
         [
             os.path.join(
@@ -275,16 +296,7 @@ rule compute_reference_optima:
             "fronts",
             "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
         ),
-        data=[] if FROM_SUMMARIES else lambda wc: [
-            os.path.join(
-                RESULTS_DIR,
-                "data",
-                f"{wc.problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}.{EXT}",
-            )
-            for mode in config["modes"]
-            for ct in CT_LEVELS
-            for psize in config["population_sizes"]
-        ]
+        data=[] if FROM_SUMMARIES else lambda wc: run_data_files(wc.problem_name)
     output:
         os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml")
     log:
@@ -298,6 +310,28 @@ rule compute_reference_optima:
         seed=lambda wc: config["base_seed"],
     script:
         REFERENCE_SCRIPT
+
+rule pooled_front:
+    input:
+        thresholds=os.path.join(RESULTS_DIR, "thresholds", "{problem_name}.yaml"),
+        reference=os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml"),
+        front=os.path.join(
+            RESULTS_DIR,
+            "fronts",
+            "{problem_name}_gen" + str(config["n_generations_front"]) + "_psize" + str(config["population_size_front"]) + "." + EXT,
+        ),
+        data=lambda wc: run_data_files(wc.problem_name)
+    output:
+        front=os.path.join(RESULTS_DIR, "fronts", "{problem_name}_pooled." + EXT),
+        summary=os.path.join(RESULTS_DIR, "fronts", "{problem_name}_pooled_summary.yaml")
+    log:
+        os.path.join(RESULTS_DIR, "log", "{problem_name}_pooled_front.log")
+    params:
+        problem=lambda wc: PROBLEM_BY_NAME[wc.problem_name],
+        hv_eps=lambda wc: config["hv_eps_percent"],
+        feasibility_tol=lambda wc: config["reference_feasibility_tol"],
+    script:
+        POOLED_FRONT_SCRIPT
 
 rule scenario_metrics:
     input:
