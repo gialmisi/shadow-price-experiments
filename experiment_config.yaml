@@ -74,8 +74,9 @@ front_operators:  # NSGA-III
 # Seed of the front generation (the NSGA-III preset's template seed; it also seeds the generator)
 front_seed: 42
 
-# Niching for the 'ranking' mode in experiment_1.py: "crowding", "knearest", or "kth"
-ranking_niching: "kth"
+# Niching for the 'ranking' mode in experiment_1.py: "crowding", "knearest" (mean distance to the
+# ranking_niching_k nearest neighbours), or "kth" (distance to the k-th nearest neighbour only)
+ranking_niching: "knearest"
 ranking_niching_k: 3
 # Tolerance of the 'hypervolume' mode (the selector's hv_eps, its default value)
 hypervolume_eps: 0.01

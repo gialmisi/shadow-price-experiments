@@ -97,7 +97,7 @@ def main() -> None:
     pcfg = next(p for p in cfg["problems"] if len(p["constraint_symbols"]) == 2)
     obj_sym = pcfg["objective_symbol"]
     c_syms = list(pcfg["constraint_symbols"])[:2]
-    niching = str(cfg.get("ranking_niching", "kth"))
+    niching = str(cfg.get("ranking_niching", "knearest"))
     niching_k = int(cfg.get("ranking_niching_k", 3))
     problem = PROBLEM_BUILDERS[pcfg["name"]]()
     modes = args.modes
