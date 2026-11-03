@@ -5,7 +5,8 @@ and each constraint alone with the others strict), the reference relaxed optimum
 best of three sources:
 
 1. the best threshold-feasible point of the NSGA-III reference front,
-2. the best threshold-feasible point of the stored experiment runs (all modes), and
+2. the best threshold-feasible point of the stored experiment runs (all modes, threshold
+   levels and population sizes), and
 3. multistart SLSQP (scipy) on the shifted problem ``min f s.t. c_j <= t_j``, started
    from the best stored run points and from random points in the box.
 
@@ -136,26 +137,20 @@ def snakemake_main() -> None:  # noqa: D103, PLR0915
                 tv[j] = tv_joint[j]
                 relaxations[f"{lvl}/{cj}"] = tv
 
-    # Candidate points, pooled file by file with streaming scans so that only the best few
-    # points of every relaxation are ever held in memory
-    def scan_best(path: str, tv: np.ndarray, n: int) -> pl.DataFrame:
-        mask = pl.all_horizontal([pl.col(c) <= float(tv[i]) for i, c in enumerate(c_cols)])
-        return (
-            pl.scan_parquet(path)
-            .select([*x_cols, f_col, *c_cols])
-            .filter(mask)
-            .sort(f_col)
-            .head(n)
-            .collect(engine="streaming")
-        )
+    # Candidate points, pooled file by file: each file is read once, and only the best few points
+    # of every relaxation are kept from it
+    def best_per_relaxation(path: str, n: int) -> dict[str, pl.DataFrame]:
+        df = pl.read_parquet(path, columns=[*x_cols, f_col, *c_cols])
+        return {key: best_of(df, tv, n) for key, tv in relaxations.items()}
 
     front_path = str(snakemake.input["front"])
-    cand_front = {key: scan_best(front_path, tv, 1) for key, tv in relaxations.items()}
+    cand_front = best_per_relaxation(front_path, 1)
     pooled: dict[str, list[pl.DataFrame]] = {key: [] for key in relaxations}
     data_paths = list(map(str, snakemake.input["data"]))
-    for path in data_paths:
-        for key, tv in relaxations.items():
-            pooled[key].append(scan_best(path, tv, n_run_starts))
+    for i_path, path in enumerate(data_paths):
+        for key, best in best_per_relaxation(path, n_run_starts).items():
+            pooled[key].append(best)
+        print(f"##slip-progress {i_path + 1}/{len(data_paths)} pooling {Path(path).name}", flush=True)
     cand_runs = {
         key: pl.concat(parts).sort(f_col).unique(subset=x_cols, maintain_order=True).head(n_run_starts)
         for key, parts in pooled.items()

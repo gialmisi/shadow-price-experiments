@@ -279,10 +279,11 @@ rule compute_reference_optima:
             os.path.join(
                 RESULTS_DIR,
                 "data",
-                f"{wc.problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{max(config['population_sizes'])}.{EXT}",
+                f"{wc.problem_name}_{mode}_gen{config['n_generations']}_runs{config['n_runs']}_ct{ct}_psize{psize}.{EXT}",
             )
             for mode in config["modes"]
             for ct in CT_LEVELS
+            for psize in config["population_sizes"]
         ]
     output:
         os.path.join(RESULTS_DIR, "reference", "{problem_name}.yaml")
