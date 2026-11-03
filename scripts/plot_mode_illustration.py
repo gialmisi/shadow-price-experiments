@@ -87,7 +87,7 @@ def main() -> None:
         default=0.8,
         help="Gaussian sigma (grid cells) applied only to the hypervolume ranking field to de-speckle it; 0 disables",
     )
-    ap.add_argument("--modes", nargs="*", default=["baseline", "relaxed", "ranking", "hypervolume"])
+    ap.add_argument("--modes", nargs="*", default=["baseline", "relaxed", "joint", "ranking", "hypervolume"])
     ap.add_argument("--output", default="results/figures/mode_illustration.pdf")
     args = ap.parse_args()
 

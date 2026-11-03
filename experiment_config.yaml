@@ -83,7 +83,7 @@ hypervolume_eps: 0.01
 
 # Data generation
 
-modes: ["baseline", "relaxed", "ranking", "hypervolume"]
+modes: ["baseline", "relaxed", "joint", "ranking", "hypervolume"]
 population_sizes: [12, 36, 60]
 n_generations: 200
 n_runs: 100
@@ -314,6 +314,8 @@ plotting:
       { color: "#000000", linestyle: "-", linewidth: 2.0, label: "Baseline" }
     relaxed:
       { color: "#0072B2", linestyle: "--", linewidth: 2.0, label: "Relaxed" }
+    joint:
+      { color: "#CC79A7", linestyle: "--", linewidth: 2.0, label: "Joint" }
     ranking:
       { color: "#E69F00", linestyle: ":", linewidth: 2.2, label: "Ranking" }
     hypervolume:

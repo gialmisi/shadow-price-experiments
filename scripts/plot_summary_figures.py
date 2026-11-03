@@ -180,7 +180,9 @@ def snakemake_main() -> None:
     mode_style = plot_cfg.get("mode_style", {}) or {
         "baseline": {"color": palette["black"], "linestyle": "-", "linewidth": 2.0, "label": "Baseline"},
         "relaxed": {"color": palette["blue"], "linestyle": "--", "linewidth": 2.0, "label": "Relaxed"},
+        "joint": {"color": "#CC79A7", "linestyle": "--", "linewidth": 2.0, "label": "Joint"},
         "ranking": {"color": palette["orange"], "linestyle": ":", "linewidth": 2.2, "label": "Ranking"},
+        "hypervolume": {"color": "#009E73", "linestyle": "-.", "linewidth": 2.0, "label": "Hypervolume"},
     }
 
     ci_alpha = float(plot_cfg.get("ci_alpha", 0.18))

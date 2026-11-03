@@ -20,5 +20,6 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-# The commit that adds SingleObjectiveConstrainedRankingSelector. Replaced by desdeo==2.9.0 once released.
-desdeo = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector", rev = "bf3be05ae5028a7a648de693f9da89ecbb7c0744" }
+# The commit with SingleObjectiveConstrainedRankingSelector, its joint mode and the layered hypervolume mode.
+# Replaced by desdeo==2.9.0 once released.
+desdeo = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector", rev = "2fc8e7aa7dba41e4f297de1f0d30fccaec1ed9a4" }

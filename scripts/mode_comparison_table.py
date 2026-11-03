@@ -1,11 +1,11 @@
 r"""Produce mode-comparison tables with Wilcoxon signed-rank statistical testing.
 
 For each (problem, population_size, threshold_level) cell the table shows
-the final-generation metric mean for each mode (Baseline / Relaxed / Ranking /
+the final-generation metric mean for each mode (Baseline / Relaxed / Joint / Ranking /
 Hypervolume). The winning modes of a cell are set in \\textbf{bold}: the modes that no
 other mode is significantly better than, provided that some mode is significantly better
-than another (six pairwise two-sided Wilcoxon signed-rank tests, alpha=0.10
-Bonferroni-corrected; the better mode of a pair is the one its signed ranks favour). For
+than another (two-sided Wilcoxon signed-rank tests on every pair of modes, alpha=0.10
+Bonferroni-corrected over the pairs; the better mode of a pair is the one its signed ranks favour). For
 metrics in ``_REFERENCE_MODE`` the same rule, applied to the remaining modes, marks the
 best runner-ups, \\underline{underlined}.
 
@@ -391,7 +391,7 @@ def snakemake_main() -> None:  # noqa: D103
 
     n_ct = len(ct_levels)
     n_modes = len(modes)
-    _MODE_ABBREV = {"baseline": "Bs", "relaxed": "Rx", "ranking": "Rk", "hypervolume": "Hv"}
+    _MODE_ABBREV = {"baseline": "Bs", "relaxed": "Rx", "joint": "Jt", "ranking": "Rk", "hypervolume": "Hv"}
     mode_abbrevs = [_MODE_ABBREV.get(m, m[:2].capitalize()) for m in modes]
     _CT_LABEL = {"low": "low", "med": "medium", "high": "high"}
     n_psizes = len(population_sizes)
@@ -439,7 +439,7 @@ def snakemake_main() -> None:  # noqa: D103
     lines.append("\\setlength{\\tabcolsep}{2pt}")
     lines.append("\\resizebox{\\ifdim\\width>\\linewidth\\linewidth\\else\\width\\fi}{!}{%")
     total_data_cols = 1 + n_ct * n_modes
-    _MODE_SHADES = ["gray!0", "gray!10", "gray!20", "gray!30"]
+    _MODE_SHADES = ["gray!0", "gray!10", "gray!20", "gray!30", "gray!40"]
     mode_col_spec = " ".join(
         ">{" + "\\columncolor{" + _MODE_SHADES[i % len(_MODE_SHADES)] + "}}c" for i in range(n_modes)
     )
