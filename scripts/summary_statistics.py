@@ -249,15 +249,11 @@ def snakemake_main() -> None:  # noqa: D103
     ref_norm = ref_full[active_mask]
     hv_ind = moocore.Hypervolume(ref=ref_norm, maximise=False)
 
-    # A constraint without an axis (threshold not positive, or weak evidence) is not relaxed in
-    # the hypervolume, so a solution counts only if it satisfies that constraint at its threshold.
-    # Without this filter, solutions violating such a constraint would add volume.
-    unaxed_constraints = [c for i, c in enumerate(c_cols) if not active_mask[i + 1]]
-    hv_source = (
-        df.filter(pl.all_horizontal([pl.col(c) <= thresholds[c] for c in unaxed_constraints]))
-        if unaxed_constraints
-        else df
-    )
+    # Only threshold-feasible solutions (c_j <= t_j for every constraint) count. The eps margin of
+    # the reference point is there so that solutions lying exactly at a threshold still add volume,
+    # not to admit solutions that break it; and a constraint without an axis (threshold not
+    # positive, or weak evidence) would otherwise not be checked at all.
+    hv_source = df.filter(pl.all_horizontal([pl.col(c) <= thresholds[c] for c in c_cols])) if c_cols else df
 
     ref_orig = ideal_active + ref_norm * range_active
     hv_meta = {
@@ -266,7 +262,6 @@ def snakemake_main() -> None:  # noqa: D103
             "all": dim_cols,
             "active": active_dim_names,
             "dropped": dropped_meta if dropped_meta else None,
-            "must_satisfy_threshold": unaxed_constraints if unaxed_constraints else None,
         },
         "hv_reference_point": {
             active_dim_names[k]: {
@@ -275,6 +270,7 @@ def snakemake_main() -> None:  # noqa: D103
             }
             for k in range(len(active_dim_names))
         },
+        "hv_solutions": "threshold-feasible only (c_j <= t_j for every constraint)",
         "hv_relax_anchors": {
             "f_strict": f_strict,
             "f_relaxed": f_relaxed,
