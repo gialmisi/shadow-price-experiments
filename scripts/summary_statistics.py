@@ -249,6 +249,16 @@ def snakemake_main() -> None:  # noqa: D103
     ref_norm = ref_full[active_mask]
     hv_ind = moocore.Hypervolume(ref=ref_norm, maximise=False)
 
+    # A constraint without an axis (threshold not positive, or weak evidence) is not relaxed in
+    # the hypervolume, so a solution counts only if it satisfies that constraint at its threshold.
+    # Without this filter, solutions violating such a constraint would add volume.
+    unaxed_constraints = [c for i, c in enumerate(c_cols) if not active_mask[i + 1]]
+    hv_source = (
+        df.filter(pl.all_horizontal([pl.col(c) <= thresholds[c] for c in unaxed_constraints]))
+        if unaxed_constraints
+        else df
+    )
+
     ref_orig = ideal_active + ref_norm * range_active
     hv_meta = {
         "hv_box_kind": hv_box_kind,
@@ -256,6 +266,7 @@ def snakemake_main() -> None:  # noqa: D103
             "all": dim_cols,
             "active": active_dim_names,
             "dropped": dropped_meta if dropped_meta else None,
+            "must_satisfy_threshold": unaxed_constraints if unaxed_constraints else None,
         },
         "hv_reference_point": {
             active_dim_names[k]: {
@@ -279,7 +290,7 @@ def snakemake_main() -> None:  # noqa: D103
     generations = sorted(df["generation"].unique().to_list())
     runs = sorted(df["run"].unique().to_list())
 
-    grouped = df.group_by(["run", "generation"], maintain_order=True)
+    grouped = hv_source.group_by(["run", "generation"], maintain_order=True)
     gen_data: dict[tuple[int, int], np.ndarray] = {}
     for (run_id, gen), sub in grouped:
         pts = normalize(sub.select(dim_cols).to_numpy()[:, active_mask])
