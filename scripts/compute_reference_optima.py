@@ -124,7 +124,10 @@ def snakemake_main() -> None:  # noqa: D103, PLR0915
 
     def best_of(df: pl.DataFrame, tv: np.ndarray, n: int) -> pl.DataFrame:
         mask = pl.all_horizontal([pl.col(c) <= float(tv[i]) for i, c in enumerate(c_cols)])
-        return df.filter(mask).sort(f_col).unique(subset=x_cols, maintain_order=True).head(n)
+        best = df.filter(mask).sort(f_col).unique(subset=x_cols, maintain_order=True).head(n)
+        # head() is a zero-copy slice that keeps the whole sorted frame alive; copy the few rows
+        # out, or the pooled candidates of all run files pile up in memory (tens of GB)
+        return pl.DataFrame(best.to_dict(as_series=False), schema=best.schema)
 
     # All relaxations to solve: strict, and per level the joint and each single relaxation
     relaxations: dict[str, np.ndarray] = {"strict": np.zeros(len(c_cols))}

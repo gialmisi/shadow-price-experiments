@@ -22,4 +22,4 @@ package = false
 [tool.uv.sources]
 # The commit with SingleObjectiveConstrainedRankingSelector, its joint mode and the layered hypervolume mode.
 # Replaced by desdeo==2.9.0 once released.
-desdeo = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector", rev = "2fc8e7aa7dba41e4f297de1f0d30fccaec1ed9a4" }
+desdeo = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector", rev = "0c4865f2f481e2cb51198baba40dd31f2804ba3e" }
