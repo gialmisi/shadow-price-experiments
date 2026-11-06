@@ -439,11 +439,10 @@ def snakemake_main() -> None:  # noqa: D103
     lines.append("\\setlength{\\tabcolsep}{2pt}")
     lines.append("\\resizebox{\\ifdim\\width>\\linewidth\\linewidth\\else\\width\\fi}{!}{%")
     total_data_cols = 1 + n_ct * n_modes
-    _MODE_SHADES = ["gray!0", "gray!10", "gray!20", "gray!30", "gray!40"]
-    mode_col_spec = " ".join(
-        ">{" + "\\columncolor{" + _MODE_SHADES[i % len(_MODE_SHADES)] + "}}c" for i in range(n_modes)
-    )
-    col_spec = "p{0.7cm} @{\\hspace{3pt}}r@{\\hspace{3pt}} " + " ".join([mode_col_spec] * n_ct)
+    # No shading and no vertical rules (EJOR guide for authors); the threshold-level groups are
+    # set apart by a wider gap instead.
+    mode_col_spec = " ".join(["c"] * n_modes)
+    col_spec = "p{0.7cm} @{\\hspace{3pt}}r@{\\hspace{8pt}} " + " @{\\hspace{10pt}} ".join([mode_col_spec] * n_ct)
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
 
     lines.append("\\toprule")
