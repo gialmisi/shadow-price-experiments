@@ -431,6 +431,7 @@ def snakemake_main() -> None:  # noqa: D103
         + " another; no mark when no mode is"
         + f" (paired two-sided Wilcoxon signed-rank tests, $\\alpha={ALPHA}$, Bonferroni-corrected)."
         + (" " + caption_note if caption_note else "")
+        + " The Wins row counts the configurations each mode wins, ties included; more wins are better."
         + reference_note
         + "}"
     )
