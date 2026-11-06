@@ -317,7 +317,7 @@ wheels = [
 [[package]]
 name = "desdeo"
 version = "2.8.0"
-source = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector?rev=0c4865f2f481e2cb51198baba40dd31f2804ba3e#0c4865f2f481e2cb51198baba40dd31f2804ba3e" }
+source = { git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector?rev=3b8dbc86e47a6a26e8c572cf43fdc748ff37a748#3b8dbc86e47a6a26e8c572cf43fdc748ff37a748" }
 dependencies = [
     { name = "bayesian-optimization" },
     { name = "coco-experiment" },
@@ -1312,7 +1312,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "desdeo", git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector?rev=0c4865f2f481e2cb51198baba40dd31f2804ba3e" },
+    { name = "desdeo", git = "file:///home/kilo/workspace/shadowprice/DESDEO-selector?rev=3b8dbc86e47a6a26e8c572cf43fdc748ff37a748" },
     { name = "matplotlib", specifier = ">=3.10" },
     { name = "moocore", specifier = ">=0.3.2" },
     { name = "numpy", specifier = ">=2.2" },
