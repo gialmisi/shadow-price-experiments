@@ -1,4 +1,4 @@
-"""Schematic of the relaxation-gain hypervolume used in the paper (2D, one constraint).
+"""Schematic of the hypervolume of the shadow-front used in the paper (2D, one constraint).
 
 This is a hand-built illustrative figure (no experiment data) whose only purpose is to
 communicate, for the single-constraint case, *what* hypervolume we compute and *why*:
@@ -7,19 +7,20 @@ communicate, for the single-constraint case, *what* hypervolume we compute and *
     strictly feasible, ``c <= t`` is threshold-feasible).
   * The vertical axis is the objective ``f`` (lower is better).
   * As we relax the constraint from its original boundary ``c = 0`` up to the threshold
-    ``c = t``, the best attainable objective improves from ``f*_strict`` to ``f*_relaxed``.
+    ``c = t``, the best attainable objective improves from ``f*(0)`` to ``f*(t)``.
     The non-dominated trade-off between "how much we relax" and "how much objective we
-    gain" is the *shadow front*.
-  * The hypervolume reference box spans ``[f*_relaxed, f*_strict]`` on the objective axis
+    gain" is the *shadow-front*.
+  * The hypervolume reference box spans ``[f*(t), f*(0)]`` on the objective axis
     and ``[0, t]`` on the constraint axis. The reference point is the nadir corner
-    ``(t, f*_strict)`` expanded outward by a small ``epsilon`` on each axis, so that
+    ``(t, f*(0))`` expanded outward by a small ``epsilon`` on each axis, so that
     solutions lying exactly on the nadir boundary (the strict and threshold optima) still
-    contribute volume. The shaded area is the hypervolume dominated by the shadow front
-    w.r.t. that reference point: it measures the quality of the shadow front, and
+    contribute volume. The shaded area is the hypervolume dominated by the shadow-front
+    w.r.t. that reference point: it measures the quality of the shadow-front, and
     therefore how well an algorithm has mapped out the relaxation trade-off.
 
-The vertical extent ``f*_strict - f*_relaxed`` is exactly the (best attainable) shadow
-price: the objective gain from relaxing the constraint up to the threshold.
+The vertical extent ``f*(0) - f*(t)`` is the relaxation gain ``pi(t)``: the objective
+improvement from relaxing the constraint up to the threshold (the finite-relaxation
+counterpart of the shadow price).
 
 The epsilon is exaggerated here for visibility; in the experiments it is a small fraction
 of each axis range.
@@ -51,7 +52,7 @@ def main() -> None:
     eps_f = 0.10 * (f_strict - f_relaxed)
     ref = (t + eps_c, f_strict + eps_f)  # reference point = nadir + epsilon
 
-    # A convex, decreasing shadow front: relaxing more (larger c) buys a better (smaller) f.
+    # A convex, decreasing shadow-front: relaxing more (larger c) buys a better (smaller) f.
     front_c = np.array([0.0, 0.16, 0.36, 0.60, 0.84, 1.00])
     front_f = np.array([f_strict, 8.1, 6.7, 5.5, 4.6, f_relaxed])
 
@@ -71,12 +72,12 @@ def main() -> None:
         [0, t, t, 0, 0], [f_relaxed, f_relaxed, f_strict, f_strict, f_relaxed], color="grey", lw=1.0, ls="-", zorder=2
     )
 
-    # Shadow front: staircase + markers.
+    # Shadow-front: staircase + markers.
     step_c = np.repeat(front_c, 2)[1:]
     step_f = np.repeat(front_f, 2)[:-1]
     ax.plot(step_c, step_f, color="#4C72B0", lw=1.6, zorder=3)
     ax.plot(
-        front_c, front_f, "o", color="#4C72B0", markeredgecolor="black", markersize=8, zorder=4, label="shadow front"
+        front_c, front_f, "o", color="#4C72B0", markeredgecolor="black", markersize=8, zorder=4, label="shadow-front"
     )
 
     # Nadir corner and the epsilon-expanded reference point.
@@ -129,7 +130,7 @@ def main() -> None:
     ax.axhline(f_strict, color="grey", ls=":", lw=0.8)
     ax.axhline(f_relaxed, color="grey", ls=":", lw=0.8)
 
-    # Shadow-price bracket on the objective axis (gain from relaxation).
+    # Relaxation-gain bracket on the objective axis.
     x_br = -0.26
     ax.annotate(
         "",
@@ -141,7 +142,7 @@ def main() -> None:
     ax.text(
         x_br - 0.07,
         0.5 * (f_strict + f_relaxed),
-        "shadow price $=f^{*}_{\\mathrm{strict}}-f^{*}_{\\mathrm{relaxed}}$",
+        "relaxation gain $\\pi(t) = f^{*}(0) - f^{*}(t)$",
         rotation=90,
         ha="center",
         va="center",
@@ -168,9 +169,9 @@ def main() -> None:
     ax.set_xticks([0.0, t])
     ax.set_xticklabels(["$0$\n(strict feasibility)", "$t$\n(threshold)"])
     ax.set_yticks([f_relaxed, f_strict])
-    ax.set_yticklabels(["$f^{*}_{\\mathrm{relaxed}}$", "$f^{*}_{\\mathrm{strict}}$"])
+    ax.set_yticklabels(["$f^{*}(t)$", "$f^{*}(0)$"])
     ax.legend(loc="lower left", fontsize=9, framealpha=0.95)
-    ax.set_title("Relaxation-gain hypervolume (single-constraint illustration)")
+    ax.set_title("Hypervolume of the shadow-front (single constraint)")
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
