@@ -419,7 +419,7 @@ def snakemake_main() -> None:  # noqa: D103
             f" The {reference_mode} ({ref_abbrev}) mode optimizes this metric by construction, so it is"
             " shown for reference:\\ \\underline{underline} marks the best runner-up(s), by the same rule"
             " applied to the remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
-            " mode's outright win count."
+            " mode's win count (ties included)."
         )
     lines.append(
         "\\caption{Final-generation mean "
