@@ -86,7 +86,6 @@ installed DESDEO's presets differ from them.
 | `plot_threshold_picker.py` | (by hand) | interactive constraint plots used to pick the thresholds |
 | `utils.py` | | problem builders and shared helpers |
 | `fetch_data.py` | (by hand) | download and unpack the archived data from Zenodo |
-| `package_zenodo.py` | (by hand) | pack `results/` into the files of the Zenodo record |
 
 ## Citation
 
