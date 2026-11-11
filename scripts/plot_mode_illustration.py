@@ -64,6 +64,26 @@ def feas_category(c1: float, c2: float) -> str:
     return "infeasible"
 
 
+def smooth_within_regions(field: np.ndarray, c1: np.ndarray, c2: np.ndarray, sigma: float) -> np.ndarray:
+    """Gaussian-smooth a grid field separately inside each of the 3x3 regions of the bands.
+
+    Normalized convolution: each region is blurred with its own mask and divided by the blurred
+    mask, so no values leak across the strict-feasibility or threshold lines, where the ranks jump.
+    """
+    band1 = np.digitize(c1, [STRICT_LINE, THRESH_LINE], right=True)
+    band2 = np.digitize(c2, [STRICT_LINE, THRESH_LINE], right=True)
+    out = np.empty_like(field)
+    for b1 in range(3):
+        for b2 in range(3):
+            mask = (band1 == b1) & (band2 == b2)
+            if not mask.any():
+                continue
+            weight = gaussian_filter(mask.astype(float), sigma=sigma)
+            blurred = gaussian_filter(np.where(mask, field, 0.0), sigma=sigma)
+            out[mask] = blurred[mask] / weight[mask]
+    return out
+
+
 def rank_with_mode(selector: SingleObjectiveConstrainedRankingSelector, c1: np.ndarray, c2: np.ndarray) -> np.ndarray:
     """Return the 1-based rank (1 = best) each (c1, c2) solution receives under the operator."""
     f = objective(c1, c2)
@@ -80,12 +100,14 @@ def main() -> None:
     ap.add_argument("--config", default="experiment_config.yaml")
     ap.add_argument("--n-feasible", type=int, default=2, help="solutions per strict/threshold-feasible region")
     ap.add_argument("--n-infeasible", type=int, default=1, help="solutions per beyond-threshold region")
-    ap.add_argument("--rank-nbins", type=int, default=70, help="grid resolution for the ranking field")
+    ap.add_argument("--rank-nbins", type=int, default=200, help="grid resolution for the ranking field")
     ap.add_argument(
         "--field-smooth",
         type=float,
-        default=0.8,
-        help="Gaussian sigma (grid cells) applied only to the hypervolume ranking field to de-speckle it; 0 disables",
+        default=2.3,
+        help="Gaussian sigma (grid cells) applied only to the hypervolume ranking field, within each region, "
+        "to de-speckle it; 0 disables "
+        "(2.3 cells at 200 bins: the same width as 0.8 cells at 70 bins)",
     )
     ap.add_argument("--modes", nargs="*", default=["baseline", "relaxed", "joint", "ranking", "hypervolume"])
     ap.add_argument("--output", default="results/figures/mode_illustration.pdf")
@@ -229,9 +251,11 @@ def main() -> None:
     cf_rank = None
     for i, m in enumerate(modes):
         field = fields[m]
-        # Only the greedy hypervolume field is speckled; the lexicographic modes stay crisp.
+        # Only the greedy hypervolume field is speckled (a checkerboard inside the threshold box: the
+        # greedy contribution order alternates between neighbouring probes); the lexicographic modes
+        # stay crisp. Smoothed per region so that the jumps at the lines stay sharp.
         if m == "hypervolume" and args.field_smooth > 0:
-            field = gaussian_filter(field, sigma=args.field_smooth)
+            field = smooth_within_regions(field, FX, FY, args.field_smooth)
         cf_rank = ax_bot[i].contourf(FX, FY, field, levels=rank_levels, cmap="plasma_r")
         ref_lines(ax_bot[i])
         ax_bot[i].set_title(f"{m.capitalize()} mode")
