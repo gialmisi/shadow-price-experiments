@@ -46,6 +46,9 @@ _TABLE_LABEL = {
 }
 
 _DASH_NOTE = " Dashes mark problems without a positive reference gain."
+# Joint-relaxation metrics. With a single constraint, joint and single relaxation coincide, so these
+# tables leave out the single-constraint problems, whose results are in the single-relaxation table.
+_JOINT_METRICS = {"joint_gap": "tab:single-gap", "hv": "tab:single-hv"}
 # (metric description for the caption, note on direction)
 _CAPTION = {
     "best_so_far": ("best-so-far feasible objective", "Lower is better."),
@@ -234,6 +237,9 @@ def snakemake_main() -> None:  # noqa: D103
     population_sizes = sorted(snakemake.params.population_sizes)
     ct_levels = list(snakemake.params.ct_levels)
     problems = list(snakemake.params.problems)
+    # Number of constraints per problem; single-constraint problems come first in every table.
+    n_constraints = {p["name"]: len(p["constraint_symbols"]) for p in snakemake.config["problems"]}
+    problems = [p for p in problems if n_constraints.get(p) == 1] + [p for p in problems if n_constraints.get(p) != 1]
     n_generations = int(snakemake.params.n_generations)
     metric_key = str(snakemake.params.metric_key)
 
@@ -410,6 +416,9 @@ def snakemake_main() -> None:  # noqa: D103
     stats_df.write_parquet(out_stats_parquet)
 
     # 3. Build main LaTeX table (bold = winner; see winner rule above).
+    # Problems shown (and counted in the Wins row); the parquet outputs keep all of them.
+    table_problems = [p for p in problems if not (metric_key in _JOINT_METRICS and n_constraints.get(p) == 1)]
+    omitted = [p for p in problems if p not in table_problems]
     idx: dict[tuple[str, int, str], dict[str, float | None]] = {}
     for r in rows:
         key = (r["problem"], r["population_size"], r["ct_level"])
@@ -425,10 +434,14 @@ def snakemake_main() -> None:  # noqa: D103
     # Count winning and runner-up cells per (ct_level, mode) column.
     win_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
     for (prob, ps, ct), wset in winners.items():
+        if prob not in table_problems:
+            continue
         for m in wset:
             win_counts[(ct, m)] = win_counts.get((ct, m), 0) + 1
     runnerup_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
     for (prob, ps, ct), rset in runnerups.items():
+        if prob not in table_problems:
+            continue
         for m in rset:
             runnerup_counts[(ct, m)] = runnerup_counts.get((ct, m), 0) + 1
 
@@ -447,6 +460,20 @@ def snakemake_main() -> None:  # noqa: D103
             " applied to the remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
             " mode's win count (ties included)."
         )
+    single_labels = ", ".join(_PROBLEM_LABEL.get(p, p) for p in problems if n_constraints.get(p) == 1)
+    merge_note = ""
+    if any(n_constraints.get(p) == 1 for p in table_problems) and {"relaxed", "joint"} <= set(modes):
+        merge_note = (
+            f" On the single-constraint problems ({single_labels}) the relaxed and joint modes coincide, so a single"
+            " value spans their two columns; the Wins row counts it for both."
+        )
+    omit_note = ""
+    if omitted:
+        omit_note = (
+            f" The single-constraint problems ({', '.join(_PROBLEM_LABEL.get(p, p) for p in omitted)}) are omitted:"
+            " with one constraint, joint and single relaxation coincide, and their results are in"
+            f" Table~\\ref{{{_JOINT_METRICS[metric_key]}}}."
+        )
     lines.append(
         "\\caption{Final-generation mean "
         + caption_metric
@@ -459,6 +486,8 @@ def snakemake_main() -> None:  # noqa: D103
         + (" " + caption_note if caption_note else "")
         + " The Wins row counts the configurations each mode wins, ties included; more wins are better."
         + reference_note
+        + merge_note
+        + omit_note
         + "}"
     )
     lines.append("\\label{" + _TABLE_LABEL.get(metric_key, "tab:" + metric_key.replace("_", "-")) + "}")
@@ -488,7 +517,7 @@ def snakemake_main() -> None:  # noqa: D103
 
     # Shared exponent per problem
     problem_exponent: dict[str, int] = {}
-    for prob in problems:
+    for prob in table_problems:
         all_vals: list[float | None] = []
         for ps in population_sizes:
             for ct in ct_levels:
@@ -496,7 +525,7 @@ def snakemake_main() -> None:  # noqa: D103
         problem_exponent[prob] = _shared_exponent(all_vals)
 
     # Data rows
-    for prob_idx, prob in enumerate(problems):
+    for prob_idx, prob in enumerate(table_problems):
         label = _PROBLEM_LABEL.get(prob, prob)
         exp = problem_exponent[prob]
         if prob_idx > 0:
@@ -509,7 +538,9 @@ def snakemake_main() -> None:  # noqa: D103
                     rot_content = f"\\shortstack[c]{{\\small {label} \\\\ \\scriptsize $(\\times 10^{{{exp}}})$}}"
                 else:
                     rot_content = f"\\small {label}"
-                prob_cell = f"\\multirow{{{n_psizes}}}{{*}}{{\\rotatebox{{90}}{{{rot_content}}}}}"
+                # Shrink labels longer than their block of rows, so they do not run into the next block.
+                fit = f"\\resizebox{{\\ifdim\\width>1.15cm 1.15cm\\else\\width\\fi}}{{!}}{{{rot_content}}}"
+                prob_cell = f"\\multirow{{{n_psizes}}}{{*}}{{\\rotatebox{{90}}{{{fit}}}}}"
             else:
                 prob_cell = ""
             data_cells: list[str] = [str(ps)]
@@ -517,18 +548,31 @@ def snakemake_main() -> None:  # noqa: D103
                 mode_vals = idx.get((prob, ps, ct), {})
                 cell_winners = winners.get((prob, ps, ct), set())
                 cell_runnerups = runnerups.get((prob, ps, ct), set())
+                # With one constraint the relaxed and joint modes run identically: one value spans
+                # both columns (the modes are adjacent in the configured order).
+                merge = (
+                    n_constraints.get(prob) == 1
+                    and "relaxed" in modes
+                    and "joint" in modes
+                    and modes.index("joint") == modes.index("relaxed") + 1
+                    and mode_vals.get("relaxed") == mode_vals.get("joint")
+                )
                 for m in modes:
+                    if merge and m == "joint":
+                        continue
                     v = mode_vals.get(m)
                     if v is None:
-                        data_cells.append("--")
-                        continue
-                    display_v = v * scale if exp != 0 else v
-                    s = _sigfig(display_v, 3, max_decimals=mdp)
-                    # Bold if this mode is a winner in this cell, underline if a runner-up.
-                    if m in cell_winners:
-                        s = f"\\textbf{{{s}}}"
-                    elif m in cell_runnerups:
-                        s = f"\\underline{{{s}}}"
+                        s = "--"
+                    else:
+                        display_v = v * scale if exp != 0 else v
+                        s = _sigfig(display_v, 3, max_decimals=mdp)
+                        # Bold if this mode is a winner in this cell, underline if a runner-up.
+                        if m in cell_winners:
+                            s = f"\\textbf{{{s}}}"
+                        elif m in cell_runnerups:
+                            s = f"\\underline{{{s}}}"
+                    if merge and m == "relaxed":
+                        s = f"\\multicolumn{{2}}{{c}}{{{s}}}"
                     data_cells.append(s)
             parts_row: list[str] = [prob_cell] + data_cells
             lines.append(" & ".join(parts_row) + " \\\\")
@@ -577,6 +621,8 @@ def snakemake_main() -> None:  # noqa: D103
     }
 
     for row in stats_rows:
+        if row["problem"] not in table_problems:
+            continue
         prob_label = _PROBLEM_LABEL.get(row["problem"], row["problem"])
         comp_label = _COMP_LABEL.get(row["comparison"], row["comparison"])
         w_str = f"{row['W']:.0f}" if row["W"] is not None else "--"
