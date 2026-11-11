@@ -39,7 +39,8 @@ need about 16 GB. Rerunning a configuration reproduces its data file in the arch
 
 Shorter ways to the results, with the archived data from Zenodo. `scripts/fetch_data.py`
 downloads the parts of the record (resuming interrupted downloads), checks them, and unpacks them
-into `results/` with their original modification times, so Snakemake does not recompute them:
+into `results/` with their original modification times, so Snakemake does not recompute them
+(`--from-dir DIR` uses files downloaded from the record by hand):
 
 - **Everything (about 17 GB):** `uv run python scripts/fetch_data.py all`. Afterwards
   `uv run snakemake --cores 8` has nothing left to do; delete any derived file to recompute it
@@ -48,9 +49,6 @@ into `results/` with their original modification times, so Snakemake does not re
   then `uv run snakemake --cores 8 --config from_summaries=true` rebuilds the tables and figures
   without the run data and fronts.
 - **Some problems:** `uv run python scripts/fetch_data.py raw --problem g9 g24` (and `fronts`).
-
-`--from-dir DIR` uses files downloaded by hand, and `--token` an access token of a Zenodo share
-link while the record is not yet public.
 - **Quick end-to-end check:** `uv run snakemake --configfile test_experiment_config.yaml --cores 8`
   runs the whole pipeline with 20 runs and 200 generations into `results/test_output/`.
 

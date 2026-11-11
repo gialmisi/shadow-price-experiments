@@ -139,7 +139,7 @@ def main() -> None:
         if path.stat().st_size != f["size"] or md5sum(path) != f["md5"]:
             sys.exit(f"{path.name}: size or MD5 differs from data_sources.yaml; delete it and run again")
         done += f["size"]
-        progress(done * 500 // total, 1000, f"{f['name']} downloaded and checked")
+        print(f"{f['name']}: downloaded and checked", flush=True)
 
     sums = {}
     for line in (dl / "SHA256SUMS").read_text().splitlines():
@@ -150,7 +150,7 @@ def main() -> None:
     archives = [f for f in wanted if f["name"].endswith((".tar", ".tar.gz"))]
     bad, n_checked = [], 0
     for i, f in enumerate(archives, 1):
-        progress(500 + (i - 1) * 500 // len(archives), 1000, f"unpacking {f['name']}")
+        print(f"unpacking {f['name']} ({i} of {len(archives)})", flush=True)
         for name in safe_extract(dl / f["name"], args.results):
             h = hashlib.sha256()
             with (args.results / name).open("rb") as fh:
@@ -161,14 +161,14 @@ def main() -> None:
                 bad.append(name)
         if not args.keep and not args.from_dir:
             (dl / f["name"]).unlink()
-    progress(1000, 1000, "unpacked and checked")
     if bad:
         sys.exit(f"{len(bad)} unpacked files differ from SHA256SUMS, e.g. {bad[:5]}")
     print(f"unpacked into {args.results}: {n_checked} files, all match SHA256SUMS", flush=True)
 
     if args.no_dry_run:
         return
-    cmd = ["uv", "run", "snakemake", "-n", "--quiet", "rules", "--config", f"results_dir={args.results}"]
+    cmd = ["uv", "run", "snakemake", "-n", "--quiet", "rules", "--rerun-triggers", "mtime",
+           "--config", f"results_dir={args.results}"]
     if args.what == "derived":
         cmd += ["from_summaries=true"]
     print("Snakemake dry run:", " ".join(cmd), flush=True)

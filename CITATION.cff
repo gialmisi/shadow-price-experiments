@@ -8,9 +8,11 @@ authors:
   - family-names: Misitano
     given-names: Giovanni
     affiliation: University of Jyväskylä
+    orcid: "https://orcid.org/0000-0002-4673-7388"
   - family-names: Branke
     given-names: Juergen
     affiliation: Warwick Business School, The University of Warwick
+    orcid: "https://orcid.org/0000-0002-4343-5878"
 keywords:
   - evolutionary computations
   - constraint handling
@@ -23,7 +25,25 @@ preferred-citation:
   authors:
     - family-names: Misitano
       given-names: Giovanni
+      orcid: "https://orcid.org/0000-0002-4673-7388"
     - family-names: Branke
       given-names: Juergen
+      orcid: "https://orcid.org/0000-0002-4343-5878"
   journal: "European Journal of Operational Research"
-  status: in preparation
+  status: in-preparation
+references:
+  - type: data
+    title: "Data for: Constraint-Relaxation Trade-offs as a By-Product of Evolutionary Black-Box Optimization"
+    authors:
+      - family-names: Misitano
+        given-names: Giovanni
+        orcid: "https://orcid.org/0000-0002-4673-7388"
+      - family-names: Branke
+        given-names: Juergen
+        orcid: "https://orcid.org/0000-0002-4343-5878"
+    publisher:
+      name: Zenodo
+    version: 1.0.0
+    year: 2026
+    doi: 10.5281/zenodo.23799274
+    url: "https://doi.org/10.5281/zenodo.23799274"
