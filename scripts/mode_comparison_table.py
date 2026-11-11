@@ -4,8 +4,8 @@ For each (problem, population_size, threshold_level) cell the table shows
 the final-generation metric mean for each mode (Baseline / Relaxed / Joint / Ranking /
 Hypervolume). The winning modes of a cell are set in \\textbf{bold}: the modes that no
 other mode is significantly better than, provided that some mode is significantly better
-than another (two-sided Wilcoxon signed-rank tests on every pair of modes, alpha=0.10
-Bonferroni-corrected over the pairs; the better mode of a pair is the one its signed ranks favour). For
+than another (two-sided Wilcoxon signed-rank tests on every pair of modes, alpha=0.05 with the
+Holm correction over the pairs of a cell; the better mode of a pair is the one its signed ranks favour). For
 metrics in ``_REFERENCE_MODE`` the same rule, applied to the remaining modes, marks the
 best runner-ups, \\underline{underlined}.
 
@@ -103,9 +103,26 @@ _PROBLEM_LABEL = {
     "g24": "G24",
 }
 
-ALPHA = 0.10
-# The Bonferroni correction is applied over all unordered pairs of modes, C(n_modes, 2), and is
-# computed at runtime from the actual mode list so it stays correct as modes are added or removed.
+ALPHA = 0.05
+# Family-wise error rate per cell. The Holm (step-down) correction is applied over the pairwise
+# tests of a cell, i.e. all unordered pairs of modes, C(n_modes, 2), that could be tested.
+
+
+def _holm_adjust(p_values: list[float]) -> list[float]:
+    """Holm-adjusted p-values (Holm 1979), in the input order.
+
+    With the raw p-values sorted ascending, p_(1) <= ... <= p_(m), the adjusted value of the
+    i-th is max_{j <= i} min(1, (m - j + 1) p_(j)); a hypothesis is rejected at level alpha iff
+    its adjusted p-value is below alpha.
+    """
+    m = len(p_values)
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, i in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * p_values[i]))
+        adjusted[i] = running
+    return adjusted
 
 
 def _sigfig(val: float, n: int = 3, max_decimals: int | None = None) -> str:
@@ -204,7 +221,7 @@ def _wilcoxon_test(
     return {
         "W": float(stat),
         "p_value": float(p_value),
-        "significant": p_value < alpha,
+        "significant": p_value < alpha,  # raw; replaced by the Holm decision of the cell
         "rank_biserial": float(r),
         "direction": direction,
         "n_nonzero": n_nonzero,
@@ -214,8 +231,6 @@ def _wilcoxon_test(
 def snakemake_main() -> None:  # noqa: D103
     summaries_meta = list(snakemake.params.summaries_meta)
     modes = list(snakemake.params.modes)
-    # Bonferroni correction over all unordered mode pairs, C(n_modes, 2), per cell.
-    alpha_corrected = ALPHA / max(1, len(modes) * (len(modes) - 1) // 2)
     population_sizes = sorted(snakemake.params.population_sizes)
     ct_levels = list(snakemake.params.ct_levels)
     problems = list(snakemake.params.problems)
@@ -322,6 +337,7 @@ def snakemake_main() -> None:  # noqa: D103
 
                 # Pairwise Wilcoxon tests. pair_better[(a, b)] = True iff a is significantly better than b.
                 pair_better: dict[tuple[str, str], bool] = {}
+                cell_tests: list[tuple[str, str, dict]] = []
                 for a, b in combinations(modes, 2):
                     av, bv = cell_vals[a], cell_vals[b]
                     if av is None or bv is None:
@@ -333,6 +349,7 @@ def snakemake_main() -> None:  # noqa: D103
                                 "comparison": f"{b}_vs_{a}",
                                 "W": None,
                                 "p_value": None,
+                                "p_holm": None,
                                 "significant": False,
                                 "rank_biserial": None,
                                 "direction": "missing_data",
@@ -352,19 +369,28 @@ def snakemake_main() -> None:  # noqa: D103
                         b2[valid],
                         higher_is_better=higher_is_better,
                         closer_to_zero=closer_to_zero,
-                        alpha=alpha_corrected,
+                        alpha=ALPHA,
                     )
-                    stats_rows.append(
-                        {
-                            "problem": prob,
-                            "population_size": ps,
-                            "ct_level": ct,
-                            "comparison": f"{b}_vs_{a}",
-                            **result,
-                        }
-                    )
-                    pair_better[(a, b)] = result["significant"] and result["direction"] == "baseline_better"
-                    pair_better[(b, a)] = result["significant"] and result["direction"] == "alt_better"
+                    row = {
+                        "problem": prob,
+                        "population_size": ps,
+                        "ct_level": ct,
+                        "comparison": f"{b}_vs_{a}",
+                        **result,
+                        "p_holm": None,
+                    }
+                    stats_rows.append(row)
+                    cell_tests.append((a, b, row))
+
+                # Holm correction over the pairs of this cell; a pair without a test (too few
+                # nonzero differences) counts as not significant and is not part of the family.
+                tested = [t for t in cell_tests if t[2]["p_value"] is not None]
+                for (a, b, row), p_adj in zip(tested, _holm_adjust([t[2]["p_value"] for t in tested])):
+                    row["p_holm"] = p_adj
+                    row["significant"] = p_adj < ALPHA
+                for a, b, row in cell_tests:
+                    pair_better[(a, b)] = row["significant"] and row["direction"] == "baseline_better"
+                    pair_better[(b, a)] = row["significant"] and row["direction"] == "alt_better"
 
                 def _winner_set(candidates: list[str]) -> set[str]:
                     """Candidates no other candidate beats, if any candidate beats another."""
@@ -416,8 +442,8 @@ def snakemake_main() -> None:  # noqa: D103
     if reference_mode is not None:
         ref_abbrev = _MODE_ABBREV.get(reference_mode, reference_mode)
         reference_note = (
-            f" The {reference_mode} ({ref_abbrev}) mode optimizes this metric by construction, so it is"
-            " shown for reference:\\ \\underline{underline} marks the best runner-up(s), by the same rule"
+            f" The {reference_mode} ({ref_abbrev}) mode optimizes this metric by construction;\\"
+            " \\underline{underline} marks the best runner-up(s), by the same rule"
             " applied to the remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
             " mode's win count (ties included)."
         )
@@ -429,7 +455,7 @@ def snakemake_main() -> None:  # noqa: D103
         + ").  \\textbf{Bold}: the winning mode(s), i.e. the modes that no other mode is"
         + " significantly better than, provided that some mode is significantly better than"
         + " another; no mark when no mode is"
-        + f" (paired two-sided Wilcoxon signed-rank tests, $\\alpha={ALPHA}$, Bonferroni-corrected)."
+        + f" (paired two-sided Wilcoxon signed-rank tests, $\\alpha={ALPHA}$, Holm-corrected over the mode pairs)."
         + (" " + caption_note if caption_note else "")
         + " The Wins row counts the configurations each mode wins, ties included; more wins are better."
         + reference_note
@@ -530,18 +556,19 @@ def snakemake_main() -> None:  # noqa: D103
     # 4. Detailed statistical results LaTeX table
     stats_lines: list[str] = []
     stats_lines.append("% Auto-generated statistical details by mode_comparison_table.py")
-    stats_lines.append("\\begin{longtable}{llrlllrrrl}")
+    stats_lines.append("\\begin{longtable}{llllrrrrll}")
     stats_lines.append(
         "\\caption{Wilcoxon signed-rank test results: all pairwise mode comparisons"
-        " ($\\alpha=" + str(ALPHA) + "$, Bonferroni-corrected to $" + f"{alpha_corrected:.4g}" + "$). "
+        " ($\\alpha=" + str(ALPHA) + "$, Holm-corrected over the mode pairs of each configuration; $p_{\\mathrm{Holm}}$"
+        " is the adjusted $p$-value, significant if below $\\alpha$). "
         "Direction names the better mode.}\\\\"
     )
     stats_lines.append("\\toprule")
-    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $r$ & Sig. & Direction \\\\")
+    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $p_{\\mathrm{Holm}}$ & $r$ & Sig. & Direction \\\\")
     stats_lines.append("\\midrule")
     stats_lines.append("\\endfirsthead")
     stats_lines.append("\\toprule")
-    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $r$ & Sig. & Direction \\\\")
+    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $p_{\\mathrm{Holm}}$ & $r$ & Sig. & Direction \\\\")
     stats_lines.append("\\midrule")
     stats_lines.append("\\endhead")
 
@@ -554,6 +581,7 @@ def snakemake_main() -> None:  # noqa: D103
         comp_label = _COMP_LABEL.get(row["comparison"], row["comparison"])
         w_str = f"{row['W']:.0f}" if row["W"] is not None else "--"
         p_str = f"{row['p_value']:.4f}" if row["p_value"] is not None else "--"
+        ph_str = f"{row['p_holm']:.4f}" if row["p_holm"] is not None else "--"
         r_str = f"{row['rank_biserial']:.3f}" if row["rank_biserial"] is not None else "--"
         sig_str = "Yes" if row["significant"] else "No"
         # The comparison "{b}_vs_{a}" maps "alt_better" -> b, "baseline_better" -> a.
@@ -566,7 +594,7 @@ def snakemake_main() -> None:  # noqa: D103
             dir_str = row["direction"].replace("_", " ")
         stats_lines.append(
             f"{prob_label} & {row['population_size']} & {row['ct_level']} & "
-            f"{comp_label} & {w_str} & {p_str} & {r_str} & {sig_str} & {dir_str} \\\\"
+            f"{comp_label} & {w_str} & {p_str} & {ph_str} & {r_str} & {sig_str} & {dir_str} \\\\"
         )
 
     stats_lines.append("\\bottomrule")
