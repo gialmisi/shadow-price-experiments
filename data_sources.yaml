@@ -1,0 +1,68 @@
+# Where the archived data of the paper live (Zenodo record, see DATA_README.md).
+# Read by fetch_data.py. md5 and size are those Zenodo reports for each file.
+zenodo:
+  record: 23799274
+  doi: 10.5281/zenodo.23799274
+  url: https://doi.org/10.5281/zenodo.23799274
+  version: 1.0.0
+files:
+  - name: README.md
+    part: meta
+    size: 7681
+    md5: f7fa052401e57d63910440e84d4f00cd
+  - name: SHA256SUMS
+    part: meta
+    size: 446673
+    md5: 39b73719166af7e91f78345d7c2e52d4
+  - name: data_branin.tar
+    part: raw
+    size: 1040261120
+    md5: 79a4e573affec5f76896df9742c996ce
+  - name: data_cantilevered_beam.tar
+    part: raw
+    size: 1492459520
+    md5: 8b1e679023ec395d4d10aaf54b3fa214
+  - name: data_g2.tar
+    part: raw
+    size: 3251292160
+    md5: 312995604bfbbd76a117588a7ce485cf
+  - name: data_g24.tar
+    part: raw
+    size: 1260288000
+    md5: f9adf74f49360701b0038e2aa0921d52
+  - name: data_g6.tar
+    part: raw
+    size: 1296046080
+    md5: 559e3c2348da33fe8c46bdb51dfba5c3
+  - name: data_g8.tar
+    part: raw
+    size: 1293824000
+    md5: 9aa57be97995fd42073978b93c360ca0
+  - name: data_g9.tar
+    part: raw
+    size: 2336849920
+    md5: e76fe9e303d5d51b6d0953bb07b1b34b
+  - name: data_mystery.tar
+    part: raw
+    size: 1056808960
+    md5: 54a01a1f0458d55d918276b3819ccb08
+  - name: data_pressure_vessel.tar
+    part: raw
+    size: 1838120960
+    md5: faf8c3fcda6f7f74ec36c47d538e25f8
+  - name: data_townsend.tar
+    part: raw
+    size: 1245849600
+    md5: 3625f11a5cebf593e586a2ce0f5c310b
+  - name: derived.tar.gz
+    part: derived
+    size: 53494282
+    md5: df07af4a72213e8c75123eb5822f7b95
+  - name: experiment_config.yaml
+    part: meta
+    size: 11177
+    md5: 294ccf2e7e8c755f3544d2894e5ad8bc
+  - name: fronts.tar
+    part: fronts
+    size: 820070400
+    md5: 988bcb4668678a42c78ac03210dc51db
