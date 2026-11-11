@@ -153,7 +153,6 @@ def snakemake_main() -> None:  # noqa: D103, PLR0915
     for i_path, path in enumerate(data_paths):
         for key, best in best_per_relaxation(path, n_run_starts).items():
             pooled[key].append(best)
-        print(f"##slip-progress {i_path + 1}/{len(data_paths)} pooling {Path(path).name}", flush=True)
     cand_runs = {
         key: pl.concat(parts).sort(f_col).unique(subset=x_cols, maintain_order=True).head(n_run_starts)
         for key, parts in pooled.items()

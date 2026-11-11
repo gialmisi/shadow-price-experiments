@@ -146,7 +146,6 @@ def snakemake_main() -> None:
     def progress(note: str) -> None:
         nonlocal step
         step += 1
-        print(f"##slip-progress {step}/{n_steps} {note}", flush=True)
 
     # 1. NSGA-III front
     nsga3 = reduce_file(str(snakemake.input["front"]), x_cols, f_col, c_cols, t_box, f_cut).with_columns(

@@ -38,10 +38,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 8 * 1024 * 1024
 
 
-def progress(done: int, total: int, note: str) -> None:
-    print(f"##slip-progress {done}/{total} {note}", flush=True)
-
-
 def md5sum(path: Path) -> str:
     h = hashlib.md5()
     with path.open("rb") as f:
