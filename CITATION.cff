@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper (preferred-citation)."
+title: "Experiment code for: Constraint-Relaxation Trade-offs as a By-Product of Evolutionary Black-Box Optimization"
+type: software
+version: 1.0.0
+license: MIT
+authors:
+  - family-names: Misitano
+    given-names: Giovanni
+    affiliation: University of Jyväskylä
+  - family-names: Branke
+    given-names: Juergen
+    affiliation: Warwick Business School, The University of Warwick
+keywords:
+  - evolutionary computations
+  - constraint handling
+  - shadow price
+  - constraint relaxation
+  - black-box optimization
+preferred-citation:
+  type: article
+  title: "Constraint-Relaxation Trade-offs as a By-Product of Evolutionary Black-Box Optimization"
+  authors:
+    - family-names: Misitano
+      given-names: Giovanni
+    - family-names: Branke
+      given-names: Juergen
+  journal: "European Journal of Operational Research"
+  status: in preparation
