@@ -105,7 +105,13 @@ strict optimum.
 `mode_comparison_{metric}.parquet` (final-generation means per problem, N, level and mode) and
 `mode_comparison_{metric}_stats.parquet` (the 10 pairwise two-sided Wilcoxon signed-rank tests per
 configuration, Holm-corrected at α = 0.05, with the adjusted p-value in `p_holm`), for the metrics `best_so_far`, `single_gap`, `single_hv`,
-`joint_gap` and `hv`, with the LaTeX tables of the paper.
+`joint_gap` and `hv`, with the LaTeX tables of the paper. The hypervolume metrics (`single_hv`, `hv`),
+which the hypervolume mode optimizes by construction, also compare the other four modes as if the
+hypervolume mode had not been run: their 6 pairwise tests form a second Holm family, with the
+adjusted p-value in `p_holm_without_hypervolume` and the verdict in
+`significant_without_hypervolume` (empty for the pairs with the hypervolume mode). The joint tables
+(`joint_gap`, `hv`) leave out the single-constraint problems (Branin, Mystery, Townsend), where
+joint and single relaxation coincide; the Parquet files hold all problems.
 
 ### `timing/runs_2026-11-04.json`
 

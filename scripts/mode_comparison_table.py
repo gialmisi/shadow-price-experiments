@@ -6,8 +6,9 @@ Hypervolume). The winning modes of a cell are set in \\textbf{bold}: the modes t
 other mode is significantly better than, provided that some mode is significantly better
 than another (two-sided Wilcoxon signed-rank tests on every pair of modes, alpha=0.05 with the
 Holm correction over the pairs of a cell; the better mode of a pair is the one its signed ranks favour). For
-metrics in ``_REFERENCE_MODE`` the same rule, applied to the remaining modes, marks the
-best runner-ups, \\underline{underlined}.
+metrics in ``_REFERENCE_MODE`` (optimized by that mode by construction), \\underline{underline} marks
+the winning modes as if the reference mode had not been run: the same rule on the pairs of the
+other modes only, with its own Holm correction over those pairs.
 
 A separate detailed statistical table reports W, p-value, rank-biserial r,
 and significance for each comparison.
@@ -30,8 +31,9 @@ except ImportError:
 _HIGHER_IS_BETTER = {"hv", "single_hv"}
 # Metrics where closer to zero is better
 _CLOSER_TO_ZERO = {"shadow_price_diff"}
-# Modes that optimize a metric by construction. They are shown for reference, and the
-# best runner-up among the remaining modes is marked by underlining.
+# Modes that optimize a metric by construction. They are shown for reference, and the winners
+# among the other modes, as if the reference mode had not been run (own Holm family over the
+# pairs of the other modes), are marked by underlining.
 _REFERENCE_MODE = {"hv": "hypervolume", "single_hv": "hypervolume"}
 
 _TABLE_LABEL = {
@@ -324,8 +326,8 @@ def snakemake_main() -> None:  # noqa: D103
     stats_rows: list[dict] = []
     # winners[(problem, psize, ct_level)] = set of winning modes (possibly empty)
     winners: dict[tuple[str, int, str], set[str]] = {}
-    # runner-ups: same rule applied to the modes that are neither the reference mode nor winners
-    runnerups: dict[tuple[str, int, str], set[str]] = {}
+    # winners among the modes other than the reference mode (own Holm family), underlined
+    winners_without_ref: dict[tuple[str, int, str], set[str]] = {}
 
     for prob in problems:
         for ps in population_sizes:
@@ -343,6 +345,11 @@ def snakemake_main() -> None:  # noqa: D103
 
                 # Pairwise Wilcoxon tests. pair_better[(a, b)] = True iff a is significantly better than b.
                 pair_better: dict[tuple[str, str], bool] = {}
+                ref_cols = (
+                    {f"p_holm_without_{reference_mode}": None, f"significant_without_{reference_mode}": False}
+                    if reference_mode is not None
+                    else {}
+                )
                 cell_tests: list[tuple[str, str, dict]] = []
                 for a, b in combinations(modes, 2):
                     av, bv = cell_vals[a], cell_vals[b]
@@ -360,6 +367,7 @@ def snakemake_main() -> None:  # noqa: D103
                                 "rank_biserial": None,
                                 "direction": "missing_data",
                                 "n_nonzero": 0,
+                                **ref_cols,
                             }
                         )
                         pair_better[(a, b)] = pair_better[(b, a)] = False
@@ -384,6 +392,7 @@ def snakemake_main() -> None:  # noqa: D103
                         "comparison": f"{b}_vs_{a}",
                         **result,
                         "p_holm": None,
+                        **ref_cols,
                     }
                     stats_rows.append(row)
                     cell_tests.append((a, b, row))
@@ -398,19 +407,31 @@ def snakemake_main() -> None:  # noqa: D103
                     pair_better[(a, b)] = row["significant"] and row["direction"] == "baseline_better"
                     pair_better[(b, a)] = row["significant"] and row["direction"] == "alt_better"
 
-                def _winner_set(candidates: list[str]) -> set[str]:
+                # The question "which mode wins if the reference mode had not been run" is its own
+                # family: the pairs of the other modes, with their own Holm correction.
+                pair_better_ref: dict[tuple[str, str], bool] = {}
+                if reference_mode is not None:
+                    tested_ref = [t for t in tested if reference_mode not in (t[0], t[1])]
+                    adj_ref = _holm_adjust([t[2]["p_value"] for t in tested_ref])
+                    for (a, b, row), p_adj in zip(tested_ref, adj_ref):
+                        row[f"p_holm_without_{reference_mode}"] = p_adj
+                        row[f"significant_without_{reference_mode}"] = p_adj < ALPHA
+                        pair_better_ref[(a, b)] = p_adj < ALPHA and row["direction"] == "baseline_better"
+                        pair_better_ref[(b, a)] = p_adj < ALPHA and row["direction"] == "alt_better"
+
+                def _winner_set(candidates: list[str], better: dict[tuple[str, str], bool]) -> set[str]:
                     """Candidates no other candidate beats, if any candidate beats another."""
                     pairs = [(a, b) for a in candidates for b in candidates if a != b]
-                    if not any(pair_better.get(p, False) for p in pairs):
+                    if not any(better.get(p, False) for p in pairs):
                         return set()
-                    return {m for m in candidates if not any(pair_better.get((o, m), False) for o in candidates)}
+                    return {m for m in candidates if not any(better.get((o, m), False) for o in candidates)}
 
                 valid_modes = [m for m in modes if cell_means[m] is not None]
-                winners[(prob, ps, ct)] = _winner_set(valid_modes)
-                runnerups[(prob, ps, ct)] = set()
-                if reference_mode is not None and winners[(prob, ps, ct)]:
-                    rest = [m for m in valid_modes if m != reference_mode and m not in winners[(prob, ps, ct)]]
-                    runnerups[(prob, ps, ct)] = _winner_set(rest)
+                winners[(prob, ps, ct)] = _winner_set(valid_modes, pair_better)
+                winners_without_ref[(prob, ps, ct)] = set()
+                if reference_mode is not None:
+                    rest = [m for m in valid_modes if m != reference_mode]
+                    winners_without_ref[(prob, ps, ct)] = _winner_set(rest, pair_better_ref)
 
     stats_df = pl.DataFrame(stats_rows)
     stats_df.write_parquet(out_stats_parquet)
@@ -431,19 +452,19 @@ def snakemake_main() -> None:  # noqa: D103
     _CT_LABEL = {"low": "low", "med": "medium", "high": "high"}
     n_psizes = len(population_sizes)
 
-    # Count winning and runner-up cells per (ct_level, mode) column.
+    # Count winning and underlined cells per (ct_level, mode) column.
     win_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
     for (prob, ps, ct), wset in winners.items():
         if prob not in table_problems:
             continue
         for m in wset:
             win_counts[(ct, m)] = win_counts.get((ct, m), 0) + 1
-    runnerup_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
-    for (prob, ps, ct), rset in runnerups.items():
+    without_ref_counts: dict[tuple[str, str], int] = {(ct, m): 0 for ct in ct_levels for m in modes}
+    for (prob, ps, ct), rset in winners_without_ref.items():
         if prob not in table_problems:
             continue
         for m in rset:
-            runnerup_counts[(ct, m)] = runnerup_counts.get((ct, m), 0) + 1
+            without_ref_counts[(ct, m)] = without_ref_counts.get((ct, m), 0) + 1
 
     lines: list[str] = []
     lines.append("% Auto-generated by mode_comparison_table.py")
@@ -456,9 +477,9 @@ def snakemake_main() -> None:  # noqa: D103
         ref_abbrev = _MODE_ABBREV.get(reference_mode, reference_mode)
         reference_note = (
             f" The {reference_mode} ({ref_abbrev}) mode optimizes this metric by construction;\\"
-            " \\underline{underline} marks the best runner-up(s), by the same rule"
-            " applied to the remaining modes, and the Wins row gives the runner-up count in parentheses next to each"
-            " mode's win count (ties included)."
+            f" \\underline{{underline}} marks the winning mode(s) as if the {reference_mode} mode had not been run,"
+            f" by the same rule on the pairs of the other modes (Holm-corrected over those pairs), and the Wins row"
+            " gives these counts in parentheses next to each mode's win count (ties included)."
         )
     single_labels = ", ".join(_PROBLEM_LABEL.get(p, p) for p in problems if n_constraints.get(p) == 1)
     merge_note = ""
@@ -547,7 +568,7 @@ def snakemake_main() -> None:  # noqa: D103
             for ct in ct_levels:
                 mode_vals = idx.get((prob, ps, ct), {})
                 cell_winners = winners.get((prob, ps, ct), set())
-                cell_runnerups = runnerups.get((prob, ps, ct), set())
+                cell_without_ref = winners_without_ref.get((prob, ps, ct), set())
                 # With one constraint the relaxed and joint modes run identically: one value spans
                 # both columns (the modes are adjacent in the configured order).
                 merge = (
@@ -566,10 +587,11 @@ def snakemake_main() -> None:  # noqa: D103
                     else:
                         display_v = v * scale if exp != 0 else v
                         s = _sigfig(display_v, 3, max_decimals=mdp)
-                        # Bold if this mode is a winner in this cell, underline if a runner-up.
+                        # Bold if this mode is a winner in this cell; underlined (also when bold) if it
+                        # wins among the modes other than the reference mode.
                         if m in cell_winners:
                             s = f"\\textbf{{{s}}}"
-                        elif m in cell_runnerups:
+                        if m in cell_without_ref:
                             s = f"\\underline{{{s}}}"
                     if merge and m == "relaxed":
                         s = f"\\multicolumn{{2}}{{c}}{{{s}}}"
@@ -585,7 +607,7 @@ def snakemake_main() -> None:  # noqa: D103
         for m in modes:
             cell = f"\\textbf{{{win_counts.get((ct, m), 0)}}}"
             if reference_mode is not None and m != reference_mode:
-                cell += f" ({runnerup_counts.get((ct, m), 0)})"
+                cell += f" ({without_ref_counts.get((ct, m), 0)})"
             count_cells.append(cell)
     lines.append(" & ".join(count_cells) + " \\\\")
 
@@ -600,19 +622,28 @@ def snakemake_main() -> None:  # noqa: D103
     # 4. Detailed statistical results LaTeX table
     stats_lines: list[str] = []
     stats_lines.append("% Auto-generated statistical details by mode_comparison_table.py")
-    stats_lines.append("\\begin{longtable}{llllrrrrll}")
+    ref_col = reference_mode is not None
+    ref_head = f" & $p_{{\\mathrm{{Holm}}}}^{{-\\mathrm{{{_MODE_ABBREV.get(reference_mode, reference_mode)}}}}}$" if ref_col else ""
+    stats_lines.append("\\begin{longtable}{llllrrr" + ("r" if ref_col else "") + "rll}")
     stats_lines.append(
         "\\caption{Wilcoxon signed-rank test results: all pairwise mode comparisons"
         " ($\\alpha=" + str(ALPHA) + "$, Holm-corrected over the mode pairs of each configuration; $p_{\\mathrm{Holm}}$"
         " is the adjusted $p$-value, significant if below $\\alpha$). "
-        "Direction names the better mode.}\\\\"
+        "Direction names the better mode."
+        + (
+            f" $p_{{\\mathrm{{Holm}}}}^{{-\\mathrm{{{_MODE_ABBREV.get(reference_mode, reference_mode)}}}}}$: adjusted over the"
+            f" pairs without the {reference_mode} mode, as if it had not been run (the underline of the main table)."
+            if ref_col
+            else ""
+        )
+        + "}\\\\"
     )
     stats_lines.append("\\toprule")
-    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $p_{\\mathrm{Holm}}$ & $r$ & Sig. & Direction \\\\")
+    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $p_{\\mathrm{Holm}}$" + ref_head + " & $r$ & Sig. & Direction \\\\")
     stats_lines.append("\\midrule")
     stats_lines.append("\\endfirsthead")
     stats_lines.append("\\toprule")
-    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $p_{\\mathrm{Holm}}$ & $r$ & Sig. & Direction \\\\")
+    stats_lines.append("Problem & $n$ & $th$ & Comparison & $W$ & $p$ & $p_{\\mathrm{Holm}}$" + ref_head + " & $r$ & Sig. & Direction \\\\")
     stats_lines.append("\\midrule")
     stats_lines.append("\\endhead")
 
@@ -628,6 +659,9 @@ def snakemake_main() -> None:  # noqa: D103
         w_str = f"{row['W']:.0f}" if row["W"] is not None else "--"
         p_str = f"{row['p_value']:.4f}" if row["p_value"] is not None else "--"
         ph_str = f"{row['p_holm']:.4f}" if row["p_holm"] is not None else "--"
+        if ref_col:
+            pr = row.get(f"p_holm_without_{reference_mode}")
+            ph_str += " & " + (f"{pr:.4f}" if pr is not None else "--")
         r_str = f"{row['rank_biserial']:.3f}" if row["rank_biserial"] is not None else "--"
         sig_str = "Yes" if row["significant"] else "No"
         # The comparison "{b}_vs_{a}" maps "alt_better" -> b, "baseline_better" -> a.
