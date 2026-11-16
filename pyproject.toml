@@ -1,6 +1,6 @@
 [project]
 name = "shadow-price-experiments"
-version = "1.0.0"
+version = "1.0.1"
 description = "Experiments for constraint-relaxation trade-offs as a by-product of evolutionary black-box optimization"
 requires-python = ">=3.12,<3.13"
 license = "MIT"

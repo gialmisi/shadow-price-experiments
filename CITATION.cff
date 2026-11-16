@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this code, please cite the paper (preferred-citation)."
 title: "Experiment code for: Constraint-Relaxation Trade-offs as a By-Product of Evolutionary Black-Box Optimization"
 type: software
-version: 1.0.0
+version: 1.0.1
 license: MIT
 authors:
   - family-names: Misitano
