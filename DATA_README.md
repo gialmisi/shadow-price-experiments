@@ -3,12 +3,12 @@
 Run data, reference fronts and derived results for the paper
 
 > G. Misitano and J. Branke, "Constraint-Relaxation Trade-offs as a By-Product of Evolutionary
-> Black-Box Optimization" (submitted to the European Journal of Operational Research).
+> Black-Box Optimization" (submitted for publication).
 
 The code that produced everything here, and that regenerates the derived results from the run
 data, is the experiment repository `shadow-price-experiments` (Snakemake pipeline, Python,
 https://github.com/gialmisi/shadow-price-experiments). This archive is its `results/` directory,
-without logs, published on Zenodo as https://doi.org/10.5281/zenodo.23799274.
+without logs, published on Zenodo as https://doi.org/10.5281/zenodo.24581507.
 
 License: CC BY 4.0.
 

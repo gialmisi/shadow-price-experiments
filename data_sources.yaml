@@ -1,19 +1,19 @@
 # Where the archived data of the paper live (Zenodo record, see DATA_README.md).
 # Read by fetch_data.py. md5 and size are those Zenodo reports for each file.
 zenodo:
-  record: 23799274
-  doi: 10.5281/zenodo.23799274
-  url: https://doi.org/10.5281/zenodo.23799274
-  version: 1.0.0
+  record: 24581507
+  doi: 10.5281/zenodo.24581507
+  url: https://doi.org/10.5281/zenodo.24581507
+  version: 1.0.1
 files:
   - name: README.md
     part: meta
-    size: 7681
-    md5: f7fa052401e57d63910440e84d4f00cd
+    size: 7649
+    md5: 73bfe5a0729b4341fe8f59ffb229eaa5
   - name: SHA256SUMS
     part: meta
     size: 446673
-    md5: 39b73719166af7e91f78345d7c2e52d4
+    md5: 7591fad9825f0fe41433447d52d30297
   - name: data_branin.tar
     part: raw
     size: 1040261120

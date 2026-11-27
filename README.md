@@ -3,7 +3,7 @@
 Experiment code for the paper
 
 > G. Misitano and J. Branke, "Constraint-Relaxation Trade-offs as a By-Product of Evolutionary
-> Black-Box Optimization" (submitted to the European Journal of Operational Research).
+> Black-Box Optimization" (submitted for publication).
 
 The repository is a [Snakemake](https://snakemake.readthedocs.io) pipeline that runs every
 experiment of the paper and produces its tables and figures, from the problem definitions to the
@@ -12,7 +12,7 @@ LaTeX tables. The selection operator studied in the paper,
 [DESDEO](https://github.com/industrial-optimization-group/DESDEO) from version 2.9.0.
 
 The run data, reference fronts and derived results are archived on Zenodo,
-[doi:10.5281/zenodo.23799274](https://doi.org/10.5281/zenodo.23799274). They are described in
+[doi:10.5281/zenodo.24581507](https://doi.org/10.5281/zenodo.24581507). They are described in
 [DATA_README.md](DATA_README.md), which is also the README of the record.
 
 ## Setup

@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this code, please cite the paper (preferred-citation)."
 title: "Experiment code for: Constraint-Relaxation Trade-offs as a By-Product of Evolutionary Black-Box Optimization"
 type: software
-version: 1.0.1
+version: 1.0.2
 license: MIT
 authors:
   - family-names: Misitano
@@ -29,8 +29,7 @@ preferred-citation:
     - family-names: Branke
       given-names: Juergen
       orcid: "https://orcid.org/0000-0002-4343-5878"
-  journal: "European Journal of Operational Research"
-  status: in-preparation
+  status: submitted
 references:
   - type: data
     title: "Data for: Constraint-Relaxation Trade-offs as a By-Product of Evolutionary Black-Box Optimization"
@@ -43,7 +42,7 @@ references:
         orcid: "https://orcid.org/0000-0002-4343-5878"
     publisher:
       name: Zenodo
-    version: 1.0.0
+    version: 1.0.1
     year: 2026
-    doi: 10.5281/zenodo.23799274
-    url: "https://doi.org/10.5281/zenodo.23799274"
+    doi: 10.5281/zenodo.24581507
+    url: "https://doi.org/10.5281/zenodo.24581507"
